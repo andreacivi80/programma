@@ -1222,6 +1222,22 @@
     table-layout: fixed; /* FONDAMENTALE: Obbliga la tabella a rispettare le larghezze definite */
 }
 
+/**
+ * Restituisce tutte le modifiche di stato registrate per i controlli CQ/QA.
+ * Questi dati vengono inviati al server per generare statistiche sugli
+ * sblocchi e notifiche agli utenti abilitati.  Se il localStorage non
+ * contiene la chiave, restituisce un array vuoto.
+ * @returns {Array} Elenco delle modifiche di stato CQ/QA
+ */
+function getQualityStatusChanges() {
+    try {
+        const local = localStorage.getItem('qualityStatusChanges');
+        return local ? JSON.parse(local) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
 /* ===== ADD: Modali scorrevoli e blocco background scroll ===== */
 /* Imposta un'altezza massima ai contenuti dei modali affinché il contenuto
    possa scorrere internamente se supera l'80% dell'altezza della finestra. */
@@ -1499,8 +1515,9 @@ body.modal-open {
    #analisiTable th:nth-child(7) { width: 80px; } 
 
 */
-        /* La parentesi graffa seguente era superflua e causava errori di parsing.
-           È stata rimossa per correggere il CSS. */
+
+
+        }
         #analisiTable th {
             background-color: #f2f2f2;
             text-align: center;
@@ -1667,7 +1684,33 @@ body.modal-open {
                 margin: 1cm;
             }
 
-            /* Le regole @page non possono essere annidate in selettori; rimosse per evitare errori CSS. */
+            body:not(.printing-logbook) @page {
+                margin: 0.1cm;
+                 @top-center {
+                    content: "Data di Stampa: " attr(data-print-date) " | Settimana: " attr(data-print-week) " | Data Programmazione: " attr(data-program-date) " | Operatore: " attr(data-operator-filter) " | Programma giornaliero di produzione";
+                    font-size: 7pt;
+                    color: #333;
+                    margin-bottom: 2px;
+                }
+                @bottom-right {
+                    content: "Pagina " counter(page) " di " counter(pages);
+                    font-size: 7pt;
+                    color: #333;
+                }
+            }
+
+            body.printing-logbook @page {
+                @top-center {
+                    content: "Logbook Attività - Filtri: " attr(data-log-filters);
+                    font-size: 8pt;
+                    color: #555;
+                }
+                @bottom-right {
+                    content: "Pagina " counter(page) " di " counter(pages);
+                    font-size: 7pt;
+                    color: #333;
+                }
+            }
 
 
             body { padding: 0; margin: 0; background-color: #fff; }
@@ -1928,6 +1971,9 @@ body.printing-analisi #analisiContainer .daily-production-controls {
     display: flex;
     gap: 8px;
     padding: 5px;
+    /* Allinea i box del tooltip in alto invece di forzarli a condividere la stessa altezza.
+       In questo modo ogni box si adatta al proprio contenuto e non allunga gli altri. */
+    align-items: flex-start;
 }
 .tooltip-box {
     padding: 10px 14px;
@@ -2488,7 +2534,10 @@ body.printing-analisi #analisiContainer .daily-production-controls {
     display: flex;
     gap: 8px;
     padding: 5px;
-    align-items: stretch; /* Assicura che i box abbiano la stessa altezza */
+    /* Allinea i box in alto invece di forzarli alla stessa altezza.
+       In questo modo ogni box si adatta al proprio contenuto e gli altri
+       rimangono compatti, evitando di occupare spazio inutile. */
+    align-items: flex-start;
 }
 
 /* Stile per il nuovo box dei commenti QA */
@@ -2658,6 +2707,126 @@ body.printing-analisi #analisiContainer .daily-production-controls {
 }
 
 /* ========================================================================= */
+/* ==> STILI PER LO STATO SPEDIZIONE (pallino per merce spedita) <== */
+/* ========================================================================= */
+/* Il pallino di spedizione viene posizionato nell'angolo in basso a destra del
+   task per le spedizioni. Permette di contrassegnare un ordine di spedizione
+   come "spedito" (verde) o "da spedire" (bianco). Ogni modifica richiede
+   l'inserimento della password magazzino (mag345). */
+.ship-status-dot {
+    position: absolute;
+    bottom: -8px;
+    right: -8px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid #b0bec5;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    cursor: pointer;
+    z-index: 10;
+}
+/* Colori per lo stato Spedizione */
+.ship-status-white { background-color: #ffffff; }
+.ship-status-green { background-color: #1976D2; }
+
+/* Stile della legenda Spedizioni */
+.ship-legend {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    font-size: 0.85em;
+    margin-top: 8px;
+    margin-right: 0;
+}
+.ship-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.ship-legend .ship-status-dot {
+    position: static;
+    display: inline-block;
+    margin-right: 4px;
+}
+.ship-legend-title {
+    font-weight: bold;
+}
+
+/* ========================================================================= */
+/* ==> STILI PER L'AVVISO SPEDIZIONI <== */
+/* ========================================================================= */
+/* Finestra popup per notificare gli utenti dei cambiamenti di stato delle
+   spedizioni. La finestra è trascinabile ed utilizza un colore blu per
+   differenziarsi dagli avvisi magazzino (verde). */
+#shippingNotification {
+    display: none;
+    position: fixed;
+    top: 30%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #ffffff;
+    border: 2px solid #1976D2; /* blu per spedizioni */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    padding: 20px;
+    z-index: 10000;
+    max-width: 500px;
+    font-size: 0.9em;
+    border-radius: 4px;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    max-height: 70vh;
+    cursor: move;
+}
+#shippingNotification p {
+    margin-bottom: 15px;
+    color: #1976D2;
+    font-weight: bold;
+}
+#shippingNotification .shipping-alert-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    margin-bottom: 10px;
+}
+#shippingNotification .shipping-alert-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 10px;
+}
+#shippingNotification .shipping-alert-buttons button {
+    padding: 5px 12px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+#shippingNotification .shipping-alert-buttons button:first-child {
+    background: #f0f0f0;
+    color: #333;
+}
+#shippingNotification .shipping-alert-buttons button:last-child {
+    background: #1976D2;
+    color: #fff;
+}
+#shippingNotification .shipping-close-btn {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 18px;
+    color: #1976D2;
+}
+#shippingNotification ul {
+    margin: 0 0 10px 0;
+    padding-left: 20px;
+}
+#shippingNotification li {
+    margin-bottom: 4px;
+}
+
+/* ========================================================================= */
 /* ==> STILI PER L'AVVISO MAGAZZINO <== */
 /* ========================================================================= */
 #warehouseNotification {
@@ -2780,10 +2949,7 @@ body.printing-analisi #analisiContainer .daily-production-controls {
             cursor: pointer;
             position: absolute;
             bottom: -8px;
-            /* Posiziona la bandierina QA nell'angolo in basso a sinistra del task */
             left: -8px;
-            right: auto;
-            top: auto;
             z-index: 10;
         }
         /* Colori per gli stati QA */
@@ -2793,104 +2959,6 @@ body.printing-analisi #analisiContainer .daily-production-controls {
         .qa-status-yellow { background-color: #FFC107; color: #000; }
         .qa-status-green { background-color: #4CAF50; color: #fff; }
         .qa-status-red { background-color: #F44336; color: #fff; }
-
-        /* ============================================================ */
-        /* ==  Nuovi stili per lo stato di spedizione (ship-status)   == */
-        /* ============================================================ */
-        /* La bandierina di spedizione viene posizionata in basso a destra
-           del task per indicare se l'ordine è stato spedito.  La lettera
-           "S" viene mostrata all'interno per chiarezza.  Lo stato
-           "white" rappresenta "non spedito", mentre lo stato "green"
-           rappresenta "spedito". */
-        .ship-status-flag {
-            width: 14px;
-            height: 14px;
-            border-radius: 2px;
-            border: 1px solid #b0bec5;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.25);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            line-height: 1;
-            cursor: pointer;
-            position: absolute;
-            bottom: -8px;
-            left: auto;
-            right: -8px;
-            top: auto;
-            z-index: 10;
-        }
-        /* Colori per gli stati di spedizione */
-        .ship-status-white { background-color: #ffffff; color: #000; }
-        .ship-status-green { background-color: #2196F3; color: #fff; }
-
-        /* ============================================================ */
-        /* ==  Stili per l'avviso di spedizione (shippingNotification) == */
-        /* ============================================================ */
-        #shippingNotification {
-            display: none;
-            position: fixed;
-            top: 30%;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #ffffff;
-            border: 2px solid #2196F3;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            padding: 20px;
-            z-index: 10000;
-            max-width: 500px;
-            font-size: 0.9em;
-            border-radius: 4px;
-            pointer-events: auto;
-            display: flex;
-            flex-direction: column;
-            max-height: 70vh;
-            cursor: move;
-        }
-        #shippingNotification p {
-            margin-bottom: 15px;
-            color: #0d47a1;
-            font-weight: bold;
-        }
-        #shippingNotification .shipping-alert-content {
-            flex: 1 1 auto;
-            overflow-y: auto;
-            margin-bottom: 10px;
-        }
-        #shippingNotification .shipping-alert-buttons {
-            display: flex;
-            justify-content: flex-end;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        #shippingNotification .shipping-alert-buttons button {
-            padding: 5px 12px;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        #shippingNotification .shipping-alert-buttons button:first-child {
-            background: #f0f0f0;
-            color: #333;
-        }
-        #shippingNotification .shipping-alert-buttons button:last-child {
-            background: #2196F3;
-            color: #fff;
-        }
-        #shippingNotification .shipping-close-btn {
-            position: absolute;
-            top: 4px;
-            right: 6px;
-            cursor: pointer;
-            font-size: 18px;
-            line-height: 18px;
-            color: #2196F3;
-        }
-        #shippingNotification ul {
-            margin: 0 0 10px 0;
-            padding-left: 20px;
-        }
 
         /* Indicatore ADR lampeggiante da visualizzare sui task di spedizione che
            richiedono il trasporto di merci pericolose.  È posizionato in alto a destra
@@ -3229,11 +3297,11 @@ body.printing-analisi #analisiContainer .daily-production-controls {
     }
 
     /* Regola #5: Imposta il layout della pagina di stampa */
-    /* L'istruzione @page non può essere annidata in un selettore;
-       la definiamo direttamente a livello di @media print per evitare errori CSS. */
-    @page {
-        size: A4 landscape;
-        margin: 1cm;
+    body.printing-warehouse-gantt {
+        @page {
+            size: A4 landscape; /* Imposta il foglio in orizzontale */
+            margin: 1cm;
+        }
     }
 }
 
@@ -3358,6 +3426,16 @@ body.printing-analisi #analisiContainer .daily-production-controls {
   text-decoration: none;
   position: relative;
 }
+
+/* Stile per il pulsante di logout nella navigazione verticale.  Utilizza un
+   colore rosso per indicare chiaramente l'azione di uscita. */
+.quick-nav-vertical a.logout-link {
+  background-color: #dc3545;
+  color: #fff;
+}
+.quick-nav-vertical a.logout-link:hover {
+  background-color: #c82333;
+}
 .quick-nav-vertical a:hover {
   background-color: #455A64;
 }
@@ -3382,50 +3460,6 @@ body.printing-analisi #analisiContainer .daily-production-controls {
   opacity: 1;
 }
 
-/* Stile dedicato al pulsante di logout nella navigazione verticale.  Questo
-   pulsante riutilizza le dimensioni delle altre icone ma con un colore
-   distintivo per indicare l'azione di uscita.  Si presenta come un
-   cerchio rosso con un'icona di accensione bianca. */
-.logout-nav-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: 4px 0;
-  border-radius: 50%;
-  background-color: #D32F2F;
-  color: #fff;
-  text-decoration: none;
-  font-size: 16px;
-  position: relative;
-}
-.logout-nav-btn:hover {
-  background-color: #B71C1C;
-}
-/* Reimpiega lo stile del tooltip per il logout: posizioniamo a sinistra
-   come per gli altri elementi della quick nav */
-.logout-nav-btn .tooltip {
-  visibility: hidden;
-  opacity: 0;
-  position: absolute;
-  right: 36px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  white-space: nowrap;
-  transition: opacity 0.2s;
-  font-size: 12px;
-  pointer-events: none;
-}
-.logout-nav-btn:hover .tooltip {
-  visibility: visible;
-  opacity: 1;
-}
-
 /* === Modal Sblocco CQ/QA === */
 .sblocco-modal {
   display: none;
@@ -3440,6 +3474,91 @@ body.printing-analisi #analisiContainer .daily-production-controls {
   align-items: flex-start;
   overflow-y: auto;
   padding-top: 40px;
+}
+
+/* === Storico Sblocchi CQ/QA === */
+.quality-log-container {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 2000;
+  overflow-y: auto;
+  padding-top: 40px;
+}
+.quality-log-header {
+  background: #fff;
+  border-radius: 6px 6px 0 0;
+  width: 95%;
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 10px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+.quality-log-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.close-quality-log-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+.quality-log-body {
+  background: #fff;
+  border-radius: 0 0 6px 6px;
+  width: 95%;
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 20px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+.quality-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-bottom: 15px;
+}
+.quality-log-table th,
+.quality-log-table td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  font-size: 12px;
+  word-wrap: break-word;
+}
+.quality-log-table th {
+  background-color: #f5f5f5;
+}
+.quality-log-summary {
+  display: flex;
+  gap: 20px;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+/* Indicatore di nuovi record sul pulsante Storico CQ/QA.
+   Quando il pulsante ha la classe has-new, viene mostrato
+   un piccolo pallino rosso nell'angolo superiore destro. */
+#qualityLogBtn.has-new {
+  position: relative;
+}
+#qualityLogBtn.has-new::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  background-color: #D50000;
+  border-radius: 50%;
 }
 .sblocco-content {
   background: #fff;
@@ -3482,13 +3601,13 @@ body.printing-analisi #analisiContainer .daily-production-controls {
   font-size: 14px;
 }
 .sblocco-table-container {
-  /* Rendere la tabella degli sblocchi CQ/QA ben visibile e ampia */
-  max-height: 70vh;
-  min-height: 50vh;
-  overflow-x: auto;
+  /* Rendere la tabella degli sblocchi CQ/QA scorrevole: fissiamo una altezza massima 
+     per attivare la barra di scorrimento verticale quando sono presenti molte righe. */
+  max-height: 60vh;
   overflow-y: auto;
+  overflow-x: auto;
   border: 1px solid #ddd;
-  padding-bottom: 60px; /* ampio margine inferiore per non sovrapporre la barra di scorrimento ai dati */
+  padding-bottom: 12px; /* margine inferiore ridotto per lasciare spazio alla barra di scorrimento */
 }
 .sblocco-table {
   width: 100%;
@@ -3515,9 +3634,9 @@ body.printing-analisi #analisiContainer .daily-production-controls {
    questo elenco (es. Descrizione) mantengono il valore di default
    definito in altre regole.*/
 .sblocco-table th:nth-child(1), .sblocco-table td:nth-child(1) { min-width: 160px; }
-.sblocco-table th:nth-child(2), .sblocco-table td:nth-child(2) { min-width: 80px; }
-.sblocco-table th:nth-child(3), .sblocco-table td:nth-child(3) { min-width: 80px; }
-.sblocco-table th:nth-child(4), .sblocco-table td:nth-child(4) { min-width: 90px; }
+.sblocco-table th:nth-child(2), .sblocco-table td:nth-child(2) { min-width: 70px; }
+.sblocco-table th:nth-child(3), .sblocco-table td:nth-child(3) { min-width: 70px; }
+.sblocco-table th:nth-child(4), .sblocco-table td:nth-child(4) { min-width: 80px; }
 .sblocco-table th:nth-child(5), .sblocco-table td:nth-child(5) { min-width: 200px; }
 .sblocco-table th:nth-child(6), .sblocco-table td:nth-child(6) { min-width: 100px; }
 .sblocco-table th:nth-child(7), .sblocco-table td:nth-child(7) { min-width: 80px; }
@@ -3601,13 +3720,10 @@ body.printing-analisi #analisiContainer .daily-production-controls {
 
         <!-- Barra di navigazione verticale numerata: consente di saltare rapidamente alle principali sezioni della pagina. La colonna rimane fissata sul lato destro dello schermo. -->
         <div id="quickNavVertical" class="quick-nav-vertical">
-            <!-- Pulsante di fine sessione (logout) sempre visibile.  Il simbolo di accensione 
-                 comunica chiaramente all'utente la funzione di uscita.  La struttura segue 
-                 quella degli altri collegamenti (numero + tooltip) per coerenza visiva. -->
-            <a id="logoutNavBtn" href="#" class="logout-nav-btn" title="Termina sessione">
-                <span>&#x23FB;</span>
-                <span class="tooltip">Logout</span>
-            </a>
+            <!-- Pulsante logout: posizionato in cima alla barra di navigazione verticale.  
+                 Utilizza la classe logout-link per colorarsi di rosso e contiene il simbolo di power.
+                 Al click esegue il logout dell'utente reimpostando il livello a 0 e ricaricando la pagina. -->
+            <a href="#" id="logoutLink" class="logout-link"><span>⏻</span><span class="tooltip">Logout</span></a>
             <a href="#" data-scroll-target="ganttChartContainer"><span>1</span><span class="tooltip">Gantt Produzione</span></a>
             <a href="#" data-scroll-target="warehouseGanttChartContainer"><span>2</span><span class="tooltip">Gantt Spedizioni</span></a>
             <a href="#" data-scroll-target="arrivalScheduleContainer"><span>3</span><span class="tooltip">Programma Arrivi</span></a>
@@ -3638,6 +3754,15 @@ body.printing-analisi #analisiContainer .daily-production-controls {
                     Logbook
                 </button>
                 <button id="printLogbookBtn" class="action-button" style="background-color: #90A4AE; color: white;">Stampa Logbook</button>
+
+                <!-- Bottone per visualizzare lo storico degli sblocchi CQ/QA.  Sarà
+                     visibile solo agli utenti con livello 5 (Analista CQ) e 6
+                     (Amministratore). Lo stile lo rende evidente ma
+                     non invasivo. Di default è nascosto e viene abilitato
+                     dinamicamente tramite applyPermissions(). -->
+                <button id="qualityLogBtn" class="action-button secondary" style="background-color: #8E24AA; color: white; display: none;">
+                    Storico CQ/QA
+                </button>
             </nav>
 
             <div class="search-filter-controls">
@@ -3687,14 +3812,11 @@ body.printing-analisi #analisiContainer .daily-production-controls {
             <div id="lastImportsSummary" class="last-import-summary" style="font-size:0.8em;color:#333;margin-bottom:15px;"></div>
             <div id="performanceGaugeWrapper" style="display:none; margin: 10px 0; padding: 10px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; font-size:0.85em;">
                 <div style="font-weight: 600; margin-bottom: 4px;">Carico del sistema</div>
-                <!-- Tachimetro a semicirconferenza con puntatore rotante. Le sezioni colorate indicano le soglie di utilizzo: verde (basso carico), giallo (medio carico) e rosso (alto carico). Il puntatore ruota da -90° (0%) a +90° (100%). -->
-                <div id="gaugeContainer" style="display:flex; align-items:center;">
-                    <div id="performanceGauge" style="position:relative; width:160px; height:80px; border-radius:160px 160px 0 0; overflow:hidden; background: conic-gradient(#28a745 0% 30%, #ffc107 30% 60%, #dc3545 60% 100%);">
-                        <div id="gaugePointer" style="position:absolute; left:50%; bottom:0; width:3px; height:80%; background:#333; transform-origin: bottom; transform: rotate(-90deg); transition: transform 0.5s ease;"></div>
-                    </div>
-                    <div id="performanceGaugeLabel" style="margin-left:10px;">Calcolo in corso...</div>
+                <!-- Canvas‑based tachimetro: un indicatore analogico con aree verde, gialla e rossa.  La lancetta si sposta in base al rapporto tra la dimensione dei dati salvati e un valore massimo (5 MB). -->
+                <div id="performanceGaugeContainer" style="display:flex; justify-content:center; align-items:center;">
+                    <canvas id="performanceGaugeCanvas" width="220" height="120"></canvas>
                 </div>
-                <div id="perfMetrics" style="margin-top:6px; font-size:0.8em;"></div>
+                <div id="performanceGaugeLabel" style="margin-top: 4px; text-align:center;">Calcolo in corso...</div>
             </div>
             <div class="table-header-controls">
                 <h2>Dettaglio Produzione</h2>
@@ -3948,7 +4070,8 @@ body.printing-analisi #analisiContainer .daily-production-controls {
                 </div>
             </div>
 
-            <!-- Avviso Spedizioni: notifica agli utenti con permesso spedizioni che un ordine di spedizione è stato marcato come spedito o ripristinato. -->
+            <!-- Avviso Spedizioni: notifica gli utenti dei cambiamenti di stato delle spedizioni.
+                 Viene popolato dinamicamente dalla funzione checkAndNotifyShipping(). -->
             <div id="shippingNotification" style="display:none;">
                 <span class="shipping-close-btn" title="Chiudi">×</span>
                 <div class="shipping-alert-content">
@@ -3958,6 +4081,41 @@ body.printing-analisi #analisiContainer .daily-production-controls {
                 <div class="shipping-alert-buttons">
                     <button id="shippingPostponeBtn" type="button">Posponi</button>
                     <button id="shippingAcknowledgeBtn" type="button">OK Ho capito</button>
+                </div>
+            </div>
+
+            <!-- Storico sblocchi CQ/QA: visualizza l'elenco completo degli sblocchi registrati e
+                 un riepilogo del numero totale di sblocchi CQ e QA.  È un overlay
+                 che copre la pagina e può essere chiuso con la X nell'angolo
+                 superiore destro.  Viene visualizzato solo per gli utenti con
+                 livello 5 (Analista CQ) o 6 (Amministratore). -->
+            <div id="qualityLogContainer" class="quality-log-container" style="display:none;">
+                <div class="quality-log-header">
+                    <h2>Storico Sblocchi CQ/QA</h2>
+                    <button id="closeQualityLogBtn" type="button" class="close-quality-log-btn" title="Chiudi">×</button>
+                </div>
+                <div class="quality-log-body">
+                    <table id="qualityLogTable" class="quality-log-table">
+                        <thead>
+                            <tr>
+                                <th>Data/Ora</th>
+                                <th>Tipo</th>
+                                <th>OV</th>
+                                <th>OP</th>
+                                <th>Codice</th>
+                                <th>Descrizione</th>
+                                <th>Lotto</th>
+                                <th>Quantità</th>
+                                <th>UM</th>
+                                <th>Nuovo Stato</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                    <div id="qualityLogSummary" class="quality-log-summary">
+                        <p>Totale sblocchi CQ: <span id="totalCqCount">0</span></p>
+                        <p>Totale sblocchi QA: <span id="totalQaCount">0</span></p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -4191,7 +4349,7 @@ body.printing-analisi #analisiContainer .daily-production-controls {
         <div style="display:flex; gap:8px;">
             <button id="printWarehouseGanttBtn" class="action-button" style="background-color: #78909C; color: white;">Stampa Gantt Spedizioni</button>
             <button id="packingListBtn" class="action-button" style="background-color: #FF9800; color: white;">Packing&nbsp;List</button>
-            <button id="sbloccoBtn" class="action-button" style="background-color: #8E24AA; color: white;">Sblocchi CQ/QA</button>
+            <button id="sbloccoBtn" class="action-button" style="display:none; background-color: #8E24AA; color: white;">Sblocchi CQ/QA</button>
         </div>
     </div>
     <!-- Pulsanti di scorrimento rimossi: per lo scorrimento si utilizza la barra
@@ -4702,8 +4860,6 @@ body.printing-analisi #analisiContainer .daily-production-controls {
         if (redSpan) redSpan.textContent = `Non conformi: ${red}`;
       }
       function renderTable(type) {
-        // === Inizio misurazione prestazioni ===
-        const _renderStart = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
         const tbody = document.querySelector(`#sbloccoTable${type} tbody`);
         if (!tbody) return;
         const data = loadData(type);
@@ -4772,54 +4928,7 @@ body.printing-analisi #analisiContainer .daily-production-controls {
           }
         }
         updateSummary(type);
-        // === Fine misurazione prestazioni ===
-        const _renderEnd = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
-        try {
-          if (!window.lastRenderDurations) window.lastRenderDurations = {};
-          window.lastRenderDurations[type] = _renderEnd - _renderStart;
-          if (typeof updatePerfMetrics === 'function') updatePerfMetrics();
-          // Emette un messaggio di debug nel console per facilitare il monitoraggio
-          // delle prestazioni tramite gli strumenti di sviluppo (F12).  Il
-          // messaggio include il tipo di tabella e la durata dell'ultimo
-          // rendering.
-          try {
-            const dur = window.lastRenderDurations[type];
-            if (typeof console !== 'undefined' && typeof console.debug === 'function') {
-              console.debug('[Performance] renderTable ' + type + ': ' + dur.toFixed(1) + ' ms');
-            }
-          } catch (e) {}
-        } catch (e) {
-          console.warn('Errore nell\'aggiornamento delle metriche di rendering:', e);
-        }
       }
-
-    /**
-     * Funzione debounce: ritarda l'esecuzione della funzione fornita finché
-     * non siano trascorsi `wait` millisecondi dall'ultimo invocazione.
-     * Utile per ridurre il numero di rendering quando si digitano i filtri,
-     * evitando di eseguire più volte il ricalcolo della tabella durante la
-     * digitazione continua.
-     * @param {Function} func - La funzione da eseguire con ritardo.
-     * @param {number} wait - Il tempo di attesa in millisecondi.
-     * @returns {Function} - Una nuova funzione che implementa il debounce.
-     */
-    function debounce(func, wait) {
-        let timeout;
-        return function () {
-            const context = this;
-            const args = arguments;
-            clearTimeout(timeout);
-            timeout = setTimeout(function () {
-                func.apply(context, args);
-            }, wait);
-        };
-    }
-
-    // Rende la funzione debounce disponibile globalmente. Alcune parti dello script
-    // richiedono l'accesso a debounce al di fuori del suo contesto originale.
-    if (typeof window !== 'undefined') {
-        window.debounce = debounce;
-    }
       function exportData(type) {
         const data = loadData(type);
         const headers = ['Data/Ora','OV','OP','Codice','Descrizione','Lotto','Quantità','Stato'];
@@ -4861,12 +4970,34 @@ body.printing-analisi #analisiContainer .daily-production-controls {
           return;
         }
         newWin.document.write('<html><head><title>Registro Sblocchi CQ/QA</title>');
-        newWin.document.write('<style>body { font-family: Arial, sans-serif; margin: 20px; } table { border-collapse: collapse; width: 100%; font-size: 12px; } th, td { border: 1px solid #ccc; padding: 4px; white-space: nowrap; } h3 { margin-top: 20px; }</style>');
+        newWin.document.write('<style>body { font-family: Arial, sans-serif; margin: 20px; } table { border-collapse: collapse; width: 100%; font-size: 12px; } th, td { border: 1px solid #ccc; padding: 4px; white-space: nowrap; text-align: center; } h3 { margin-top: 20px; }</style>');
         newWin.document.write('</head><body>');
+        // Costruisci una versione stampabile delle tabelle CQ e QA senza campi di input.
+        function buildPrintableTable(data) {
+          let html = '<table><thead><tr>' +
+            '<th>Data/Ora</th><th>OV</th><th>OP</th><th>Codice</th><th>Descrizione</th><th>Lotto</th><th>Quantità</th><th>Stato</th>' +
+            '</tr></thead><tbody>';
+          data.forEach(item => {
+            html += '<tr>' +
+              '<td>' + (item.dateTime || '') + '</td>' +
+              '<td>' + (item.ov || '') + '</td>' +
+              '<td>' + (item.op || '') + '</td>' +
+              '<td>' + (item.codice || '') + '</td>' +
+              '<td>' + (item.descrizione || '') + '</td>' +
+              '<td>' + (item.lotto || '') + '</td>' +
+              '<td>' + (item.quantita || '') + '</td>' +
+              '<td>' + (item.state || '') + '</td>' +
+              '</tr>';
+          });
+          html += '</tbody></table>';
+          return html;
+        }
+        const dataCQ = typeof loadData === 'function' ? loadData('CQ') : [];
+        const dataQA = typeof loadData === 'function' ? loadData('QA') : [];
         newWin.document.write('<h3>Sblocchi CQ</h3>');
-        newWin.document.write(tableCQ.outerHTML);
+        newWin.document.write(buildPrintableTable(dataCQ));
         newWin.document.write('<h3>Sblocchi QA</h3>');
-        newWin.document.write(tableQA.outerHTML);
+        newWin.document.write(buildPrintableTable(dataQA));
         newWin.document.write('</body></html>');
         newWin.document.close();
         // Focalizza e stampa dopo un breve delay per garantire che il DOM sia
@@ -4916,24 +5047,16 @@ body.printing-analisi #analisiContainer .daily-production-controls {
         if (resetCQ) resetCQ.addEventListener('click', function() { resetFilters('CQ'); });
         const resetQA = document.getElementById('sbloccoQAResetBtn');
         if (resetQA) resetQA.addEventListener('click', function() { resetFilters('QA'); });
-        // Crea versioni debounce dei render per CQ e QA per ottimizzare i filtri
-        const debouncedRenderCQ = debounce(() => renderTable('CQ'), 300);
-        const debouncedRenderQA = debounce(() => renderTable('QA'), 300);
         ['StartDate','EndDate','StateFilter','FilterCodice','FilterOV','FilterOP','FilterDescrizione','FilterLotto'].forEach(function(suffix) {
           const elCQ = document.getElementById(`sbloccoCQ${suffix}`);
           if (elCQ) {
             const eventType = (suffix === 'StartDate' || suffix === 'EndDate' || suffix === 'StateFilter') ? 'change' : 'input';
-            // Per gli eventi di input usa la funzione debounce per limitare i rendering ripetuti
-            elCQ.addEventListener(eventType, function() {
-              if (eventType === 'input') debouncedRenderCQ(); else renderTable('CQ');
-            });
+            elCQ.addEventListener(eventType, function() { renderTable('CQ'); });
           }
           const elQA = document.getElementById(`sbloccoQA${suffix}`);
           if (elQA) {
             const eventType2 = (suffix === 'StartDate' || suffix === 'EndDate' || suffix === 'StateFilter') ? 'change' : 'input';
-            elQA.addEventListener(eventType2, function() {
-              if (eventType2 === 'input') debouncedRenderQA(); else renderTable('QA');
-            });
+            elQA.addEventListener(eventType2, function() { renderTable('QA'); });
           }
         });
         const exportBtn = document.getElementById('sbloccoExportBtn');
@@ -5079,18 +5202,18 @@ flatpickr(document.getElementById('opiScadEndDate'), { dateFormat: "d/m/Y", loca
      * corrisponde al livello definito in passwords; i valori sono booleani.
      */
     const alertPermissions = {
-        // Livello 1: utente base.  Nessun permesso di notifica.
-        1: { ADR: false, CQ: false, QA: false, quarantena: false, spedizioni: false },
-        // Livello 2: utente commerciale.  Riceve tutte le notifiche CQ/QA e spedizioni.
-        2: { ADR: true,  CQ: true,  QA: true,  quarantena: false, spedizioni: true  },
-        // Livello 3: utente produzione.  Riceve tutte le notifiche CQ/QA e spedizioni.
-        3: { ADR: true,  CQ: true,  QA: true,  quarantena: false, spedizioni: true  },
-        // Livello 4: utente magazzino.  Riceve tutte le notifiche CQ/QA e spedizioni.
-        4: { ADR: true,  CQ: true,  QA: true,  quarantena: false, spedizioni: true  },
-        // Livello 5 (Analista) corrisponde al Controllo Qualità.  Riceve solo la quarantena.
-        5: { ADR: true,  CQ: false, QA: false, quarantena: true, spedizioni: false  },
-        // Livello 6 (Amministratore).  Riceve solo ADR.
-        6: { ADR: true,  CQ: false, QA: false, quarantena: false, spedizioni: false }
+        // Livello 1 (Base): non riceve ADR, CQ, QA, quarantena né notifiche spedizioni
+        1: { ADR: false, CQ: false, QA: false, quarantena: false, shipping: false },
+        // Livello 2 (Commerciale): riceve ADR, CQ, QA e notifiche spedizioni ma non quarantena
+        2: { ADR: true,  CQ: true,  QA: true,  quarantena: false, shipping: true  },
+        // Livello 3 (Produzione): riceve ADR, CQ, QA e notifiche spedizioni ma non quarantena
+        3: { ADR: true,  CQ: true,  QA: true,  quarantena: false, shipping: true  },
+        // Livello 4 (Magazzino): riceve ADR, CQ, QA e notifiche spedizioni ma non quarantena
+        4: { ADR: true,  CQ: true,  QA: true,  quarantena: false, shipping: true  },
+        // Livello 5 (Analista) corrisponde al Controllo Qualità: riceve ADR e quarantena, non CQ/QA né spedizioni
+        5: { ADR: true,  CQ: false, QA: false, quarantena: true,  shipping: false  },
+        // Livello 6 (Amministratore): riceve ADR e può creare PL; non riceve CQ, QA, quarantena o spedizioni
+        6: { ADR: true,  CQ: false, QA: false, quarantena: false, shipping: false }
     };
 
     /*
@@ -5360,6 +5483,17 @@ flatpickr(document.getElementById('opiScadEndDate'), { dateFormat: "d/m/Y", loca
                     adrDivCQ.style.display = 'none';
                 }
             }
+
+            // Per l'analista CQ nascondiamo il pulsante Storico CQ/QA: la funzione è stata
+            // integrata direttamente nelle tabelle CQ/QA e il pulsante non è più necessario.
+            {
+                const qlBtn = document.getElementById('qualityLogBtn');
+                if (qlBtn) {
+                    qlBtn.style.display = 'none';
+                    qlBtn.disabled = true;
+                    qlBtn.style.pointerEvents = 'none';
+                }
+            }
             break;
         case 6: // Amministratore
             allInputs.forEach(el => { el.disabled = false; el.readOnly = false; el.style.pointerEvents = 'auto'; });
@@ -5368,6 +5502,16 @@ flatpickr(document.getElementById('opiScadEndDate'), { dateFormat: "d/m/Y", loca
             const adrDivAdmin = document.getElementById('adrNotification');
             if (adrDivAdmin) {
                 adrDivAdmin.style.display = 'none';
+            }
+
+            // Per l'amministratore nascondiamo il pulsante Storico CQ/QA poiché non più utilizzato
+            {
+                const qlBtn = document.getElementById('qualityLogBtn');
+                if (qlBtn) {
+                    qlBtn.style.display = 'none';
+                    qlBtn.disabled = true;
+                    qlBtn.style.pointerEvents = 'none';
+                }
             }
 
             // Il pulsante Packing List verrà gestito globalmente in base alla mappa dei permessi.
@@ -5417,13 +5561,6 @@ flatpickr(document.getElementById('opiScadEndDate'), { dateFormat: "d/m/Y", loca
         // Questo carica i dati salvati e genera i grafici solo quando l'utente è autentificato,
         // così da evitare rallentamenti all'apertura della pagina.
         initializeAfterLogin();
-
-        // Salva il livello dell'utente per ripristinare il login dopo un refresh
-        try {
-            sessionStorage.setItem('userLevel', String(currentUserLevel));
-        } catch (e) {
-            console.warn('Impossibile salvare il livello utente in sessionStorage:', e);
-        }
         
     } else {
         loginError.style.display = 'block';
@@ -6613,7 +6750,13 @@ async function saveDataToServer() {
         // Dati della quarantena (merce evasa da arrivi)
         quarantine_data: typeof getAllQuarantineData === 'function' ? getAllQuarantineData() : [],
         // Dati della tabella Merce in Scadenza (Inventario)
-        expiring_goods_data: typeof getAllExpiringGoodsData === 'function' ? getAllExpiringGoodsData() : []
+        expiring_goods_data: typeof getAllExpiringGoodsData === 'function' ? getAllExpiringGoodsData() : [],
+        // Invia al server anche le modifiche di stato spedizione in modo da
+        // sincronizzare le notifiche tra le varie utenze.
+        shipping_status_changes: typeof getShippingStatusChanges === 'function' ? getShippingStatusChanges() : [],
+        // Invia al server anche le modifiche di stato CQ/QA per consentire
+        // analisi statistiche sugli sblocchi e notifiche comuni.
+        quality_status_changes: typeof getQualityStatusChanges === 'function' ? getQualityStatusChanges() : []
     };
 
     try {
@@ -6712,19 +6855,32 @@ async function loadDataFromServer() {
                         console.warn('Impossibile salvare i dati DeviceRef in localStorage:', e);
                     }
                 }
-                // ===== Caricamento dei dati di produzione medicale =====
-                // Carica i dati solo se presenti e non vuoti.  In assenza di dati dal
-                // server, mantiene le informazioni locali per preservare l'ultimo
-                // import.  Questo impedisce che un import successivo o un reload
-                // sovrascriva involontariamente i dati salvati localmente.
-                if (data.medical_production_data && Array.isArray(data.medical_production_data) && data.medical_production_data.length > 0) {
-                    try {
-                        localStorage.setItem('medicalProductionData', JSON.stringify(data.medical_production_data));
-                    } catch (e) {
-                        console.warn('Impossibile salvare medicalProductionData in localStorage:', e);
+                    // ===== Caricamento dei dati di produzione medicale =====
+                    // Aggiorna i dati di produzione medicale solo se non esistono dati
+                    // locali.  In questo modo, dopo un'importazione manuale i dati
+                    // rimangono persistenti e non vengono sovrascritti dal server
+                    // (che potrebbe restituire una versione obsoleta) durante il refresh
+                    // automatico.  Se il localStorage contiene dati, si assume che
+                    // siano più recenti e non vengono sostituiti.  L'utente può sempre
+                    // aggiornare manualmente ricaricando i dati dal server tramite
+                    // l'apposito pulsante.
+                    if (data.medical_production_data && Array.isArray(data.medical_production_data) && data.medical_production_data.length > 0) {
+                        let shouldUpdateMedical = false;
+                        try {
+                            const existingMP = JSON.parse(localStorage.getItem('medicalProductionData') || '[]');
+                            shouldUpdateMedical = !(Array.isArray(existingMP) && existingMP.length > 0);
+                        } catch (e) {
+                            shouldUpdateMedical = true;
+                        }
+                        if (shouldUpdateMedical) {
+                            try {
+                                localStorage.setItem('medicalProductionData', JSON.stringify(data.medical_production_data));
+                            } catch (e) {
+                                console.warn('Impossibile salvare medicalProductionData in localStorage:', e);
+                            }
+                            populateMedicalDeviceProductionTable(data.medical_production_data);
+                        }
                     }
-                    populateMedicalDeviceProductionTable(data.medical_production_data);
-                }
                 // ===============================================================
 
                 // ===== Caricamento dei dati di quarantena (merce evasa) =====
@@ -6739,6 +6895,41 @@ async function loadDataFromServer() {
                         console.warn('Impossibile salvare i dati della quarantena in localStorage:', e);
                     }
                     populateQuarantineTable(data.quarantine_data);
+                }
+                // ===============================================================
+
+                // ===== Caricamento delle modifiche di stato spedizioni =====
+                // Se il server restituisce modifiche di stato spedizione, le salva
+                // nel localStorage e aggiorna eventuali notifiche.  In assenza
+                // di dati, mantiene le informazioni locali correnti per non
+                // perdere gli eventi registrati su questo client.
+                if (data.shipping_status_changes && Array.isArray(data.shipping_status_changes)) {
+                    try {
+                        localStorage.setItem('shippingStatusChanges', JSON.stringify(data.shipping_status_changes));
+                    } catch (e) {
+                        console.warn('Impossibile salvare shippingStatusChanges in localStorage:', e);
+                    }
+                    // Dopo aver aggiornato i dati, verifica se ci sono notifiche per l'utente corrente
+                    if (typeof checkAndNotifyShipping === 'function') {
+                        checkAndNotifyShipping();
+                    }
+                }
+                // ===============================================================
+
+                // ===== Caricamento delle modifiche di stato CQ/QA =====
+                // Analogamente alle spedizioni, aggiorna localStorage con le
+                // modifiche di stato qualità e notifica gli utenti se
+                // necessario.  In assenza di dati dal server, lascia i dati
+                // locali invariati.
+                if (data.quality_status_changes && Array.isArray(data.quality_status_changes)) {
+                    try {
+                        localStorage.setItem('qualityStatusChanges', JSON.stringify(data.quality_status_changes));
+                    } catch (e) {
+                        console.warn('Impossibile salvare qualityStatusChanges in localStorage:', e);
+                    }
+                    if (typeof checkAndNotifyQuality === 'function') {
+                        checkAndNotifyQuality();
+                    }
                 }
                 // ===============================================================
 
@@ -6759,11 +6950,10 @@ async function saveOpiDataToLocalAndServer(opiData) {
         // Aggiorna la data/ora dell'ultimo import OPI usando il formato leggibile.
         if (typeof formatDateTimeForDisplay === 'function') {
             const nowStr = formatDateTimeForDisplay(new Date());
-            // Salva l'ultima importazione OPI su una chiave uniforme senza underscore
-            localStorage.setItem('lastImportOPI', nowStr);
+            localStorage.setItem('lastImport_OPI', nowStr);
         } else {
             // Fallback se la funzione non esiste: salva l'Epoch time in stringa
-            localStorage.setItem('lastImportOPI', Date.now().toString());
+            localStorage.setItem('lastImport_OPI', Date.now().toString());
         }
         // Aggiorna le etichette di importazione e la sezione riassuntiva, se disponibile
         if (typeof updateImportTimestamps === 'function') {
@@ -6815,9 +7005,10 @@ function loadOpiDataFromLocalAndServer() {
             }
         }
 
-        // Dopo l'aggiornamento, controlla se esistono notifiche di spedizione
-        // per gli ordini marcati come spediti.  Verrà mostrato un pop-up
-        // solo agli utenti abilitati alle notifiche di spedizione.
+        // Dopo l'aggiornamento, controlla se esistono notifiche di spedizione.
+        // Le notifiche di spedizione vengono mostrate a tutti gli utenti che
+        // non hanno ancora riconosciuto le modifiche.  Questa verifica è
+        // separata da quella magazzino per gestire correttamente i livelli.
         if (typeof checkAndNotifyShipping === 'function') {
             try {
                 checkAndNotifyShipping();
@@ -7123,6 +7314,16 @@ async function registerQualityStatusChange(type, targetRow) {
                 um,
                 timestamp: new Date().toISOString()
             });
+
+            // DEBUG/Sentinella: registra su console l'evento di cambiamento e
+            // aggiunge un indicatore visivo sul pulsante Storico CQ/QA, se presente.
+            try {
+                console.log('registerQualityStatusChange', { type, code, lotto, newStatus, ov, op });
+                const qlBtnDbg = document.getElementById('qualityLogBtn');
+                if (qlBtnDbg) {
+                    qlBtnDbg.classList.add('has-new');
+                }
+            } catch (e) { /* ignore */ }
             localStorage.setItem('qualityStatusChanges', JSON.stringify(changes));
             // Salva il cambiamento anche sul server se possibile.
             // Usare await richiede che questa funzione sia dichiarata async.
@@ -7133,10 +7334,46 @@ async function registerQualityStatusChange(type, targetRow) {
                     // l'esecuzione.  Il server dovrà interpretare
                     // qualityStatusChanges dal localStorage.
                     await saveDataToServer();
-                } catch (e) {
-                    console.warn('Errore nel salvataggio su server dello stato CQ/QA:', e);
+            } catch (e) {
+                console.warn('Errore nel salvataggio su server dello stato CQ/QA:', e);
+            }
+        }
+
+        // Aggiorna anche le tabelle "Sblocchi CQ/QA" se disponibili.  In caso
+        // di presenza delle funzioni sbloccoLoadData/sbloccoSaveData (nuova
+        // gestione), registra l'evento nelle tabelle CQ o QA e forza un
+        // render immediato.  Questo permette di visualizzare subito le
+        // modifiche nella sezione in basso del registro sblocchi, senza
+        // passare dall'overlay "Storico CQ/QA".
+        try {
+            if (typeof window.sbloccoLoadData === 'function' && typeof window.sbloccoSaveData === 'function') {
+                const entryTimestamp = new Date();
+                const timestamp = entryTimestamp.toISOString();
+                const entry = {
+                    timestamp: timestamp,
+                    date: timestamp.split('T')[0],
+                    dateTime: entryTimestamp.toLocaleString('it-IT'),
+                    ov: ov || '',
+                    op: op || '',
+                    codice: code || '',
+                    descrizione: descrizione || '',
+                    lotto: lotto || '',
+                    quantita: quantita || '',
+                    state: newStatus || ''
+                };
+                const currentData = window.sbloccoLoadData(type) || [];
+                currentData.push(entry);
+                window.sbloccoSaveData(type, currentData);
+                // Aggiorna la tabella relativa per mostrare subito la nuova riga
+                if (type === 'CQ' && typeof window.renderCQ === 'function') {
+                    window.renderCQ();
+                } else if (type === 'QA' && typeof window.renderQA === 'function') {
+                    window.renderQA();
                 }
             }
+        } catch (err) {
+            console.warn('Errore nell\'aggiornamento delle tabelle Sblocchi CQ/QA:', err);
+        }
         } catch (err) {
             console.warn('Errore nel salvataggio del cambiamento CQ/QA:', err);
         }
@@ -7336,59 +7573,13 @@ async function registerQualityStatusChange(type, targetRow) {
     }
 
     /**
-     * Gestisce il click sulla bandierina di spedizione per i task di spedizione.
-     * Richiede la password magazzino (mag345) ad ogni click, sia per impostare
-     * che per rimuovere lo stato "spedito".  Dopo aver aggiornato lo stato,
-     * salva i dati, registra la modifica per le notifiche e aggiorna il Gantt.
-     * @param {Event} event L'evento click
+     * Registra un cambiamento di stato di spedizione per un ordine di
+     * spedizione.  Ogni entry contiene un identificatore univoco, le
+     * informazioni principali della riga e un timestamp.  Le notifiche
+     * verranno mostrate agli utenti tramite checkAndNotifyShipping().
+     * @param {Object} rowData Dati della riga di spedizione
      */
-    async function handleShipStatusClick(event) {
-        event.stopPropagation();
-        const flag = event.target;
-        const rowId = flag.dataset.rowId;
-        const row = document.querySelector(`tr[data-row-id="${rowId}"]`);
-        if (!row) return;
-        // Richiede sempre la password magazzino
-        const password = window.prompt('Inserisci la password magazzino:');
-        if (password !== 'mag345') {
-            window.alert('Password errata.');
-            return;
-        }
-        const currentStatus = row.dataset.shipStatus || 'white';
-        // Determina il nuovo stato: se era white diventa green (spedito), altrimenti torna white
-        const newStatus = currentStatus === 'white' ? 'green' : 'white';
-        row.dataset.shipStatus = newStatus;
-        flag.classList.remove(`ship-status-${currentStatus}`);
-        flag.classList.add(`ship-status-${newStatus}`);
-        // Aggiorna il testo nel flag se necessario (opzionale, ma lasciamo sempre 'S')
-        flag.textContent = 'S';
-        // Raccogli i dati della riga e registra la modifica per le notifiche
-        const rowData = getShippingScheduleRowData(row);
-        registerShippingStatusChange(rowData, newStatus);
-        // Salva localmente e sul server
-        autoSaveAllData();
-        if (typeof saveDataToServer === 'function') {
-            try {
-                await saveDataToServer();
-            } catch (e) {
-                console.warn('Errore nel salvataggio dei dati dopo modifica spedizione:', e);
-            }
-        }
-        // Aggiorna il Gantt per riflettere il nuovo stato
-        updateWarehouseGanttChart();
-        // Controlla se ci sono avvisi da mostrare
-        if (typeof checkAndNotifyShipping === 'function') {
-            checkAndNotifyShipping();
-        }
-    }
-
-    /**
-     * Registra una modifica di stato spedizione nel localStorage per generare un avviso.
-     * Ogni modifica contiene le informazioni principali della riga e un timestamp.
-     * @param {Object} rowData I dati della riga di spedizione
-     * @param {String} newStatus Il nuovo stato ("green" = spedito, "white" = non spedito)
-     */
-    function registerShippingStatusChange(rowData, newStatus) {
+    function registerShippingStatusChange(rowData) {
         try {
             let changes = [];
             try {
@@ -7398,13 +7589,14 @@ async function registerQualityStatusChange(type, targetRow) {
             }
             const id = 'SHIP-' + Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 5);
             const change = {
-                id: id,
+                id,
                 code: rowData.codiceArticolo || rowData.codice || '',
                 descrizione: rowData.descrizioneArticolo || rowData.descrizione || '',
                 ov: rowData.ov || '',
                 quantita: rowData.quantita || '',
                 um: rowData.um || '',
-                newStatus: newStatus === 'green' ? 'Spedito' : 'Non Spedito',
+                // Determina lo stato leggendo il dataset shipStatus: "green" indica spedito
+                newStatus: rowData.shipStatus === 'green' ? 'Spedito' : 'Da spedire',
                 timestamp: new Date().toISOString()
             };
             changes.push(change);
@@ -7415,43 +7607,121 @@ async function registerQualityStatusChange(type, targetRow) {
     }
 
     /**
-     * Controlla i cambiamenti di stato di spedizione e mostra un pop-up
-     * di notifica agli utenti con permesso spedizioni.  L'utente può
-     * rinviare o confermare l'avviso; in quest'ultimo caso le notifiche
-     * attuali vengono marcate come riconosciute per quel livello di utente.
+     * Gestisce il click sul pallino Spedizione.  Richiede la password
+     * magazzino (mag345) ad ogni click e consente di alternare lo stato tra
+     * "da spedire" (bianco) e "spedito" (verde).  Aggiorna i dati
+     * localmente e sul server, rinnova il grafico Gantt e registra
+     * l'evento per la notifica.
+     * @param {Event} event L'evento click sul pallino spedizione
+     */
+    async function handleShipStatusClick(event) {
+        event.stopPropagation();
+        const dot = event.target;
+        const rowId = dot.dataset.rowId;
+        const targetRow = document.querySelector(`tr[data-row-id="${rowId}"]`);
+        if (!targetRow) return;
+        // Chiede la password ad ogni clic. La verifica è case‑sensitive.
+        const password = window.prompt('Inserisci la password magazzino per la spedizione:');
+        if (password !== 'mag345') {
+            window.alert('Password errata.');
+            return;
+        }
+        const currentStatus = targetRow.dataset.shipStatus || 'white';
+        let newStatus;
+        if (currentStatus === 'green') {
+            newStatus = 'white';
+        } else {
+            newStatus = 'green';
+        }
+        // Aggiorna lo stato sul dataset della riga
+        targetRow.dataset.shipStatus = newStatus;
+        // Aggiorna immediatamente il colore del pallino nella riga
+        dot.classList.remove('ship-status-white', 'ship-status-green');
+        dot.classList.add(`ship-status-${newStatus}`);
+        // Registra il cambiamento per notificare gli altri utenti
+        const rowData = getShippingScheduleRowData(targetRow);
+        if (typeof registerShippingStatusChange === 'function') {
+            registerShippingStatusChange(rowData);
+        }
+        // Salva tutte le modifiche sul server e ricarica i dati per rendere
+        // immediatamente visibile il nuovo stato nel Gantt e nelle tabelle
+        autoSaveAllData();
+        if (typeof saveDataToServer === 'function') {
+            try {
+                await saveDataToServer();
+                // Dopo aver salvato, ricarica i dati dal server per riflettere
+                // immediatamente il nuovo stato anche sugli altri dispositivi.
+                if (typeof loadDataFromServer === 'function') {
+                    await loadDataFromServer();
+                }
+            } catch (e) {
+                console.warn('Errore nel salvataggio dei dati spedizione:', e);
+            }
+        }
+        // Aggiorna il Gantt per riflettere il nuovo stato
+        if (typeof updateWarehouseGanttChart === 'function') {
+            updateWarehouseGanttChart();
+        }
+        // Mostra la notifica spedizione se necessario
+        if (typeof checkAndNotifyShipping === 'function') {
+            checkAndNotifyShipping();
+        }
+    }
+
+    /**
+     * Controlla i cambiamenti di stato delle spedizioni e mostra un pop‑up di
+     * notifica agli utenti.  L'utente può rinviare o confermare
+     * l'avviso; in quest'ultimo caso le notifiche attuali vengono
+     * marcate come riconosciute per quel livello di utente.
      */
     function checkAndNotifyShipping() {
+        // Verifica i permessi: mostra la notifica solo ai livelli con permesso shipping
         const perms = alertPermissions[currentUserLevel] || {};
-        if (!perms.spedizioni) return;
+        if (!perms.shipping) {
+            // Se non sono previste notifiche spedizioni per questo livello, nascondi e termina
+            const sDivNoPerm = document.getElementById('shippingNotification');
+            if (sDivNoPerm) sDivNoPerm.style.display = 'none';
+            return;
+        }
+
         let changes;
         try {
             changes = JSON.parse(localStorage.getItem('shippingStatusChanges') || '[]');
         } catch (e) {
             changes = [];
         }
-        if (!Array.isArray(changes) || changes.length === 0) {
-            const sDiv0 = document.getElementById('shippingNotification');
-            if (sDiv0) sDiv0.style.display = 'none';
-            return;
-        }
-        let ack;
-        try {
-            ack = JSON.parse(localStorage.getItem('shippingAcknowledgedIds_' + currentUserLevel) || '[]');
-        } catch (e) {
-            ack = [];
-        }
-        const toShow = changes.filter(item => !ack.includes(item.id));
-        if (toShow.length === 0) {
-            const sDiv1 = document.getElementById('shippingNotification');
-            if (sDiv1) sDiv1.style.display = 'none';
-            return;
-        }
         const sDiv = document.getElementById('shippingNotification');
+        if (!Array.isArray(changes) || changes.length === 0) {
+            if (sDiv) sDiv.style.display = 'none';
+            return;
+        }
+        // Recupera l'elenco di ID già riconosciuti per questo livello utente
+        let acknowledged;
+        try {
+            acknowledged = JSON.parse(localStorage.getItem('shippingAcknowledgedIds_' + currentUserLevel) || '[]');
+        } catch (e) {
+            acknowledged = [];
+        }
+        // Filtra le notifiche non ancora riconosciute
+        const filtered = changes.filter(item => !acknowledged.includes(item.id));
+        if (filtered.length === 0) {
+            if (sDiv) sDiv.style.display = 'none';
+            return;
+        }
+        // Raggruppa per codice per mostrare solo l'ultima notifica per codice
+        const latestMap = {};
+        filtered.forEach(item => {
+            const key = item.code || 'UNKNOWN';
+            if (!latestMap[key] || new Date(item.timestamp) > new Date(latestMap[key].timestamp)) {
+                latestMap[key] = item;
+            }
+        });
+        const toShow = Object.values(latestMap);
         if (!sDiv) return;
         const pEl = sDiv.querySelector('p');
         const ulEl = sDiv.querySelector('ul');
         if (pEl) {
-            pEl.textContent = 'Aggiornamenti Spedizione disponibili';
+            pEl.textContent = 'Aggiornamenti Spedizioni disponibili';
         }
         if (ulEl) {
             const itemsHtml = toShow.map(item => {
@@ -7475,16 +7745,16 @@ async function registerQualityStatusChange(type, targetRow) {
         }
         if (okBtn) {
             okBtn.onclick = () => {
-                let ackNow;
+                let ack = [];
                 try {
-                    ackNow = JSON.parse(localStorage.getItem('shippingAcknowledgedIds_' + currentUserLevel) || '[]');
+                    ack = JSON.parse(localStorage.getItem('shippingAcknowledgedIds_' + currentUserLevel) || '[]');
                 } catch (e) {
-                    ackNow = [];
+                    ack = [];
                 }
                 toShow.forEach(item => {
-                    if (!ackNow.includes(item.id)) ackNow.push(item.id);
+                    if (!ack.includes(item.id)) ack.push(item.id);
                 });
-                localStorage.setItem('shippingAcknowledgedIds_' + currentUserLevel, JSON.stringify(ackNow));
+                localStorage.setItem('shippingAcknowledgedIds_' + currentUserLevel, JSON.stringify(ack));
                 sDiv.style.display = 'none';
             };
         }
@@ -7494,7 +7764,6 @@ async function registerQualityStatusChange(type, targetRow) {
             };
         }
     }
-
     /**
      * Controlla i cambiamenti di stato del magazzino e mostra un pop-up di
      * notifica agli utenti CQ.  L'utente può rinviare o confermare
@@ -7714,10 +7983,6 @@ async function registerQualityStatusChange(type, targetRow) {
 
     // Sostituisce il vecchio caricamento da localStorage con quello dal server
     loadDataFromServer();
-
-    // Crea una versione debounced di saveDataToServer per evitare salvataggi troppo frequenti.
-    // Viene eseguita al massimo una volta ogni 800 ms.
-    const debouncedSave = (typeof debounce === 'function') ? debounce(() => saveDataToServer(), 800) : (async () => saveDataToServer());
     
     // Attiva il salvataggio automatico dopo ogni modifica.
     // Aggiungi questo event listener a tutte le tabelle modificabili.
@@ -7732,15 +7997,18 @@ async function registerQualityStatusChange(type, targetRow) {
         if (overlayVisible || !currentUserLevel || currentUserLevel <= 0) {
             return;
         }
-        // Usa la funzione debounced per ridurre i salvataggi a raffica
-        debouncedSave();
+        saveDataToServer();
     });
 
-    // Imposta un intervallo per ricaricare i dati periodicamente. Qui abbiamo
-    // scelto un intervallo di 5 minuti (300.000 ms) per sincronizzare
-    // automaticamente le modifiche degli altri utenti. Se desideri un
-    // intervallo diverso, modifica il valore in millisecondi.
-    setInterval(loadDataFromServer, 300000);
+    // Imposta un intervallo per ricaricare i dati periodicamente. In precedenza
+    // veniva utilizzato un intervallo di 5 minuti (300.000 ms), che
+    // causava un ritardo percepito nel ricevere gli aggiornamenti degli altri
+    // utenti (fino a diversi minuti). Riduciamo l'intervallo a 30 secondi
+    // (30.000 ms) per sincronizzare più frequentemente i dati senza
+    // incidere troppo sulle prestazioni. Se necessario, questo valore può
+    // essere ulteriormente regolato.
+    // Aggiorna i dati dal server ogni 60 secondi per ridurre il carico e migliorare le prestazioni.
+    setInterval(loadDataFromServer, 60000);
 
 
     duplicateRowBtn.addEventListener('click', async () => {
@@ -8468,24 +8736,7 @@ async function processPPFile(file) {
 
         if (importedData.length > 0) {
             await compareAndApplyPPChanges(importedData, file.name);
-            autoSaveAllData(); // Salva immediatamente i dati nel localStorage
-            // Aggiorna il timestamp dell'ultimo import PP e sincronizza la sezione riassuntiva
-            try {
-                var nowStr;
-                if (typeof formatDateTimeForDisplay === 'function') {
-                    nowStr = formatDateTimeForDisplay(new Date());
-                } else {
-                    // Fallback: usa ISO 8601 se la funzione non è disponibile
-                    nowStr = new Date().toISOString();
-                }
-                // Aggiorna chiave uniforme per l'ultimo import PP
-                localStorage.setItem('lastImportPP', nowStr);
-                if (typeof updateImportTimestamps === 'function') {
-                    updateImportTimestamps();
-                }
-            } catch (errTimestamp) {
-                console.warn('Impossibile aggiornare lastImportPP:', errTimestamp);
-            }
+            autoSaveAllData(); // <-- AGGIUNTA CHIAVE: Salva immediatamente i dati nel localStorage
         } else {
             await showAlert('Nessun dato valido trovato nel file importato o il file è vuoto.');
         }
@@ -9017,8 +9268,7 @@ importArrivalsBtn.addEventListener('click', () => {
                 // Aggiorna timestamp dell'ultimo import Arrivi
                 const ts = formatDateTimeForDisplay(new Date());
                 try {
-                    // Usa una chiave uniforme senza underscore
-                    localStorage.setItem('lastImportArrivals', ts);
+                    localStorage.setItem('lastImport_Arrivals', ts);
                 } catch (e) {}
                 if (typeof updateImportTimestamps === 'function') updateImportTimestamps();
             } else {
@@ -9143,12 +9393,7 @@ importArrivalsBtn.addEventListener('click', () => {
         if (importMode) {
             const nowTs = formatDateTimeForDisplay(new Date());
             try {
-                // Utilizza una chiave uniforme senza underscore: es. lastImportOV, lastImportOS
-                // Costruisce la chiave uniformemente in CamelCase: es.
-                // 'OS' -> 'lastImportOS', 'deviceRef' -> 'lastImportDeviceRef'
-                const normalized = importMode.charAt(0).toUpperCase() + importMode.slice(1);
-                const key = 'lastImport' + normalized;
-                localStorage.setItem(key, nowTs);
+                localStorage.setItem(`lastImport_${importMode}`, nowTs);
             } catch (e) {
                 // In caso di impossibilità a scrivere sul localStorage (es. modalità privata), ignora
             }
@@ -9329,18 +9574,10 @@ async function processDeviceRefFile(file) {
         await saveDataToServer();
         // Mostra feedback all'utente
         await showAlert('Nuovo file DeviceRef importato con successo!');
-        // Aggiorna la data/ora dell'ultimo import DeviceRef sia nel localStorage
-        // che nell'etichetta vicino al bottone
-        const nowStr = formatDateTimeForDisplay(new Date());
-        try {
-            localStorage.setItem('lastImportDeviceRef', nowStr);
-        } catch (e) {}
+        // Aggiorna eventuali etichette di stato
         const statusSpan = document.getElementById('lastImportDeviceRef');
         if (statusSpan) {
-            statusSpan.textContent = ` (Ultimo import: ${nowStr})`;
-        }
-        if (typeof updateImportTimestamps === 'function') {
-            updateImportTimestamps();
+            statusSpan.textContent = ` (Ultimo import: ${formatDateTimeForDisplay(new Date())})`;
         }
     } catch (e) {
         console.error('Errore durante l\'importazione del file DeviceRef:', e);
@@ -9446,12 +9683,12 @@ function loadStaticData() {
             renderAnalysisTableHeaders();
             updateAnalisiTable();
 
-            // Registra la data/ora dell'ultimo import Referenze su una chiave uniforme
+            // Registra la data/ora dell'ultimo import Referenze
             if (typeof formatDateTimeForDisplay === 'function') {
                 const nowStr = formatDateTimeForDisplay(new Date());
-                localStorage.setItem('lastImportReferenze', nowStr);
+                localStorage.setItem('lastImport_referenze', nowStr);
             } else {
-                localStorage.setItem('lastImportReferenze', Date.now().toString());
+                localStorage.setItem('lastImport_referenze', Date.now().toString());
             }
             if (typeof updateImportTimestamps === 'function') {
                 updateImportTimestamps();
@@ -9481,12 +9718,12 @@ function loadStaticData() {
             renderAnalysisTableHeaders();
             updateAnalisiTable();
 
-            // Registra la data/ora dell'ultimo import Piano Analitico su una chiave uniforme
+            // Registra la data/ora dell'ultimo import Piano Analitico
             if (typeof formatDateTimeForDisplay === 'function') {
                 const nowStr = formatDateTimeForDisplay(new Date());
-                localStorage.setItem('lastImportPianoAnalitico', nowStr);
+                localStorage.setItem('lastImport_pianoAnalitico', nowStr);
             } else {
-                localStorage.setItem('lastImportPianoAnalitico', Date.now().toString());
+                localStorage.setItem('lastImport_pianoAnalitico', Date.now().toString());
             }
             if (typeof updateImportTimestamps === 'function') {
                 updateImportTimestamps();
@@ -9529,9 +9766,9 @@ function loadStaticData() {
                 return;
             }
             await transformAndImportMedicalProductionData(rows, file.name);
-            // Aggiorna timestamp ultimo import su chiave uniforme
+            // Aggiorna timestamp ultimo import
             const nowStr = formatDateTimeForDisplay(new Date());
-            localStorage.setItem('lastImportMedicalProduction', nowStr);
+            localStorage.setItem('lastImport_MedicalProduction', nowStr);
             updateImportTimestamps();
             // Salva su server i dati appena importati
             await saveDataToServer();
@@ -9551,9 +9788,11 @@ function loadStaticData() {
      */
     async function transformAndImportMedicalProductionData(data, fileName) {
         const deviceRefs = typeof getDeviceRefData === 'function' ? getDeviceRefData() : JSON.parse(localStorage.getItem('deviceRefData') || '[]');
-        // Crea un set di codici validi per i dispositivi medici
-        const validCodes = new Set(deviceRefs.map(ref => ref.codice && String(ref.codice).trim()));
-        // Ottieni le referenze per descrizione (opzionale): referenzeData e deviceRefData
+        // Ottieni le referenze per descrizione (opzionale): referenzeData e deviceRefData.  In questa
+        // versione non filtriamo più i codici sulla base dei deviceRefs: tutte le righe
+        // del file importato vengono considerate valide.  Tuttavia, se il codice non
+        // viene trovato nelle referenze, la descrizione e il cliente possono essere
+        // ricavate dai dataset di supporto oppure lasciate vuote.
         const referenzeDataLocal = JSON.parse(localStorage.getItem('referenzeData') || '[]');
 
         // Funzione per ottenere descrizione da referenzeData in base al codice
@@ -9601,44 +9840,65 @@ function loadStaticData() {
         // Flag scarti -> colonna I (indicatore "scarti" o quantità negativa)
         const colScartoFlag = excelColToIndex('I');
 
-        const importRows = data.filter(row => row && row.length > Math.max(colUnit, colQuantity, colLotto, colCliente, colDesc));
-        // Mappa per aggregare dati per codice, data e lotto
-        const aggregated = {};
+        // Costruisce un set dei codici validi a partire dal file DeviceRef (se disponibile).
+        const validCodes = new Set();
+        if (Array.isArray(deviceRefs)) {
+            deviceRefs.forEach(ref => {
+                const c = String((ref && (ref.codice || ref['Cod.'])) || '').trim();
+                if (c) validCodes.add(c);
+            });
+        }
+
+        // In questa versione importiamo ogni riga singolarmente senza aggregare.  Non
+        // imponiamo un numero minimo di colonne: se alcune colonne sono assenti la
+        // cella corrispondente rimarrà vuota.  Le righe con flag "scarto" o
+        // quantità negativa vengono interpretate come scarti (unita) mentre le
+        // altre vengono conteggiate in quantita.
+        const importRows = data.filter(row => Array.isArray(row) && row.length > 0);
+        const finalData = [];
         importRows.forEach(row => {
             const code = String(row[colCode] || '').trim();
-            if (!code || !validCodes.has(code)) {
-                return; // ignora codici non presenti nel deviceRef
-            }
+            // Importa solo i codici presenti nel DeviceRef (validCodes).  Se l'elenco è vuoto,
+            // significa che il DeviceRef non è stato ancora importato; in tal caso importa tutte le righe.
+            if (!code || (validCodes.size > 0 && !validCodes.has(code))) return;
             const rawDate = row[colDate];
             const dateStr = parseDateValue(rawDate);
             const lotto = String(row[colLotto] || '').trim();
-            const key = `${code}||${dateStr}||${lotto}`;
             const qtyRaw = parseNumericValue(row[colQuantity]);
             const descrFlag = String(row[colScartoFlag] || '').toLowerCase();
-            const descr = String(row[colDesc] || '').trim() || getDescrizioneForCode(code);
-            const cliente = String(row[colCliente] || '').trim() || getClienteForCode(code);
-            if (!aggregated[key]) {
-                aggregated[key] = {
-                    data: dateStr,
-                    codice: code,
-                    descrizione: descr,
-                    cliente: cliente,
-                    lotto: lotto,
-                    quantita: 0,
-                    unita: 0
-                };
-            }
-            // Determina se è una riga di scarto
+            const descr = (String(row[colDesc] || '').trim()) || getDescrizioneForCode(code);
+            const cliente = (String(row[colCliente] || '').trim()) || getClienteForCode(code);
+            // Determina se è una riga di scarto: flag "scarto" o quantità negativa
             const isScartoRow = (descrFlag.includes('scarto') || descrFlag.includes('scarti')) || (qtyRaw < 0);
-            if (isScartoRow) {
-                aggregated[key].unita += Math.abs(qtyRaw);
-            } else {
-                aggregated[key].quantita += qtyRaw;
-            }
+            finalData.push({
+                data: dateStr,
+                codice: code,
+                descrizione: descr,
+                cliente: cliente,
+                lotto: lotto,
+                quantita: isScartoRow ? 0 : Math.abs(qtyRaw),
+                unita: isScartoRow ? Math.abs(qtyRaw) : 0
+            });
         });
-        const finalData = Object.values(aggregated);
-        localStorage.setItem('medicalProductionData', JSON.stringify(finalData));
-        populateMedicalDeviceProductionTable(finalData);
+        // Prima di salvare, rimuovi eventuali dati precedenti per liberare spazio.
+        try {
+            localStorage.removeItem('medicalProductionData');
+        } catch (e) {
+            console.warn('Impossibile rimuovere medicalProductionData dal localStorage:', e);
+        }
+        // Tenta di salvare i nuovi dati; se la quota è superata, mostra un messaggio di errore.
+        let saved = false;
+        try {
+            localStorage.setItem('medicalProductionData', JSON.stringify(finalData));
+            saved = true;
+        } catch (e) {
+            console.error('Errore nel salvataggio medicalProductionData:', e);
+        }
+        if (!saved) {
+            await showAlert("Errore: i dati della produzione medicale sono troppo voluminosi e non possono essere salvati. Prova a cancellare i dati precedenti o a importare un file più piccolo.");
+        } else {
+            populateMedicalDeviceProductionTable(finalData);
+        }
     }
 
     /**
@@ -11078,6 +11338,11 @@ function showSplitShippingTooltip(taskData, event) {
     genericTooltip.style.boxShadow = '0 4px 15px rgba(0,0,0,0.25)';
     genericTooltip.style.maxWidth = '950px'; // Larghezza sufficiente per 3 box
 
+    // Calcola la chiave del codice articolo (codeKey) per riferimenti successivi
+    // Alcune sezioni del tooltip (es. MD) si riferivano a `codeKey` senza definirlo a livello superiore,
+    // causando un ReferenceError.  Qui definiamo sempre `codeKey` in base ai dati del task.
+    const codeKey = String(taskData.codiceArticolo || taskData.codice || '').trim().toUpperCase();
+
     // Prepara il contenuto per il Box 1: Dettaglio Ordine
     // Determina l'etichetta corretta per l'ordine: per le spedizioni (con rowId) mostra "OV", per gli arrivi (senza rowId) mostra "OA".
     const ovLabel = taskData && taskData.rowId ? 'OV' : 'OA';
@@ -11512,10 +11777,8 @@ try {
                 const mdData = typeof getMedicalProductionData === 'function'
                     ? getMedicalProductionData()
                     : JSON.parse(localStorage.getItem('medicalProductionData') || '[]');
-                // Calcola la chiave MD basandosi sul codice articolo del task corrente
-                const codeKeyMD = String(taskData.codiceArticolo || '').trim().toUpperCase();
                 const mdMatches = Array.isArray(mdData)
-                    ? mdData.filter(mp => String(mp.codice || '').trim().toUpperCase() === codeKeyMD)
+                    ? mdData.filter(mp => String(mp.codice || '').trim().toUpperCase() === codeKey)
                     : [];
                 if (mdMatches.length > 0) {
                     mdDetails = mdMatches.map(mp => {
@@ -11910,21 +12173,24 @@ function showGenericTooltip(htmlContent, event) {
         }
 
         genericTooltip.classList.add('visible');
-        // Posiziona subito il tooltip in base all'evento iniziale
+        // Posiziona subito il tooltip e fai in modo che segua il puntatore.
         moveGenericTooltip(event);
-        // Aggiunge un listener per seguire il movimento del mouse mentre il
-        // tooltip è visibile.  Questo permette all'utente di vedere
-        // l'elemento sottostante senza che il tooltip copra il puntatore.
-        document.addEventListener('mousemove', moveGenericTooltip);
+        // Aggiungi un listener mousemove per spostare dinamicamente il tooltip.
+        if (!window.genericTooltipMouseMoveHandler) {
+            window.genericTooltipMouseMoveHandler = function(ev) {
+                moveGenericTooltip(ev);
+            };
+            document.addEventListener('mousemove', window.genericTooltipMouseMoveHandler);
+        }
     }
 
 function hideGenericTooltip() {
-    if (genericTooltip) {
-        genericTooltip.classList.remove('visible');
+    if (genericTooltip) genericTooltip.classList.remove('visible');
+    // Rimuovi il listener mousemove se era stato aggiunto
+    if (window.genericTooltipMouseMoveHandler) {
+        document.removeEventListener('mousemove', window.genericTooltipMouseMoveHandler);
+        window.genericTooltipMouseMoveHandler = null;
     }
-    // Quando il tooltip viene nascosto, rimuove il listener del mouse per
-    // evitare overhead inutile.
-    document.removeEventListener('mousemove', moveGenericTooltip);
 }
 
 // Gestisce il click sul pallino CQ: chiede la password e apre l'editor dello stato CQ.
@@ -12101,8 +12367,6 @@ function openQAStatusEditor(targetRow) {
     // Applica la funzionalità di drag ai pop‑up se sono presenti nel DOM
     makeNotificationDraggable(document.getElementById('qualityNotification'));
     makeNotificationDraggable(document.getElementById('adrNotification'));
-    // Rende trascinabile anche l'avviso di spedizione
-    makeNotificationDraggable(document.getElementById('shippingNotification'));
         }
     };
     cancelBtn.onclick = () => editorModal.remove();
@@ -12168,24 +12432,40 @@ function moveGenericTooltip(event) {
     const tooltipRect = genericTooltip.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    // Calcola la posizione orizzontale centrando il tooltip attorno al puntatore.
-    // Questa logica impedisce al tooltip di uscire a destra o a sinistra del viewport,
-    // spostandolo in modo equilibrato rispetto al punto di origine.
-    let x = event.clientX - (tooltipRect.width / 2);
-    // Impedisci che il tooltip vada oltre il margine sinistro.
-    if (x < 10) x = 10;
-    // Impedisci che il tooltip vada oltre il margine destro.
-    if (x + tooltipRect.width > viewportWidth - 10) {
-        x = viewportWidth - tooltipRect.width - 10;
+    // Posiziona il tooltip a lato del puntatore in modo intelligente:
+    // - Se il puntatore è nella metà sinistra dello schermo, mostra il tooltip a destra;
+    // - Altrimenti mostra il tooltip a sinistra.
+    // Analogamente per la posizione verticale: se è nella metà superiore mostra sotto, altrimenti sopra.
+    let x;
+    let y;
+    // Determina la posizione orizzontale
+    if (event.clientX < viewportWidth / 2) {
+        // Posiziona il tooltip a destra del puntatore
+        x = event.clientX + 20;
+        if (x + tooltipRect.width > viewportWidth - 10) {
+            x = viewportWidth - tooltipRect.width - 10;
+        }
+    } else {
+        // Posiziona il tooltip a sinistra del puntatore
+        x = event.clientX - tooltipRect.width - 20;
+        if (x < 10) {
+            x = 10;
+        }
     }
-    // Posizione verticale: per default sotto il puntatore con offset.
-    let y = event.clientY + 20;
-    // Se il tooltip esce dal fondo dello schermo, posizionalo sopra il puntatore.
-    if (y + tooltipRect.height > viewportHeight - 10) {
+    // Determina la posizione verticale
+    if (event.clientY < viewportHeight / 2) {
+        // Sotto il puntatore
+        y = event.clientY + 20;
+        if (y + tooltipRect.height > viewportHeight - 10) {
+            y = viewportHeight - tooltipRect.height - 10;
+        }
+    } else {
+        // Sopra il puntatore
         y = event.clientY - tooltipRect.height - 20;
+        if (y < 10) {
+            y = 10;
+        }
     }
-    // Impedisci di finire sopra il bordo superiore.
-    if (y < 10) y = 10;
     genericTooltip.style.left = `${x}px`;
     genericTooltip.style.top = `${y}px`;
 }
@@ -12544,7 +12824,15 @@ function updateWarehouseGanttChart() {
             // Per la sezione spedizioni inseriamo le legende CQ e QA una sotto l'altra,
             // aggiungendo uno spazio verticale dedicato tra di esse. In questo modo
             // l'utente percepisce chiaramente che si tratta di due blocchi distinti.
-            rowHeader.innerHTML = `<strong>${title}</strong>${cqLegendHtml}<div class="legend-separator"></div>${qaLegendHtml}`;
+            // Crea la legenda per lo stato spedizione (da spedire / spedito).  Questa
+            // legenda viene aggiunta alla sezione delle spedizioni in modo simile a CQ e QA.
+            const shipLegendHtml = '<div class="ship-legend"><span class="ship-legend-title">Legenda Spedizioni:</span>' +
+                '<div class="ship-legend-item"><span class="ship-status-dot ship-status-white"></span><span> Da spedire</span></div>' +
+                '<div class="ship-legend-item"><span class="ship-status-dot ship-status-green"></span><span> Spedito</span></div>' +
+            '</div>';
+            // Mostra tutte e tre le legende (CQ, QA e Spedizioni) separate da un
+            // piccolo separatore verticale per rendere chiaro che sono blocchi distinti.
+            rowHeader.innerHTML = `<strong>${title}</strong>${cqLegendHtml}<div class="legend-separator"></div>${qaLegendHtml}<div class="legend-separator"></div>${shipLegendHtml}`;
         }
         ganttGrid.appendChild(rowHeader);
 
@@ -12696,17 +12984,16 @@ function updateWarehouseGanttChart() {
                         });
                         taskElement.appendChild(qaFlag);
 
-                        // Bandierina Spedizione per le spedizioni
-                        const shipFlag = document.createElement('span');
-                        shipFlag.className = 'ship-status-flag';
-                        shipFlag.classList.add(`ship-status-${task.shipStatus || 'white'}`);
-                        shipFlag.dataset.rowId = task.rowId;
-                        shipFlag.textContent = 'S';
-                        shipFlag.addEventListener('click', (e) => {
+                        // Pallino SPEDIZIONE (stato spedito) per le spedizioni
+                        const shipDot = document.createElement('span');
+                        shipDot.className = 'ship-status-dot';
+                        shipDot.classList.add(`ship-status-${task.shipStatus || 'white'}`);
+                        shipDot.dataset.rowId = task.rowId;
+                        shipDot.addEventListener('click', (e) => {
                             e.stopPropagation();
                             handleShipStatusClick(e);
                         });
-                        taskElement.appendChild(shipFlag);
+                        taskElement.appendChild(shipDot);
 
                         // Evidenzia le spedizioni ADR con una cornice rossa lampeggiante
                         const taskCodeUpper = (task.codiceArticolo || '').toString().trim().toUpperCase();
@@ -13110,8 +13397,9 @@ function createShippingScheduleRow(rowData = {}) {
     // viene impostato di default a 'white' (merce in fase di valutazione).
     row.dataset.qaStatus = rowData.qaStatus || 'white';
 
-    // Inizializza lo stato di spedizione. Se non è presente nei dati,
-    // viene impostato di default a 'white' (ordine non ancora spedito).
+    // Inizializza lo stato SPEDIZIONE per le spedizioni. Se non è presente nei dati,
+    // viene impostato di default a 'white' (da spedire).  Questo valore verrà
+    // utilizzato sia nella tabella sia nel grafico Gantt per visualizzare lo stato "spedito".
     row.dataset.shipStatus = rowData.shipStatus || 'white';
 
     // Salva le note di servizio interne (colonna Q del file OS) nel dataset.  In questo modo
@@ -13153,8 +13441,7 @@ function getShippingScheduleRowData(row) {
         commentiQA: row.dataset.commentiQA || '', // Legge sempre dall'attributo data aggiornato
         cqStatus: row.dataset.cqStatus || 'white', // Stato CQ dell'ordine di spedizione
         qaStatus: row.dataset.qaStatus || 'white', // Stato QA dell'ordine di spedizione
-        // Stato Spedizione dell'ordine di spedizione
-        shipStatus: row.dataset.shipStatus || 'white',
+        shipStatus: row.dataset.shipStatus || 'white', // Stato SPEDIZIONE dell'ordine di spedizione
         // Restituisce anche le note interne (colonna Q) memorizzate nel dataset della riga.
         noteServizio: row.dataset.noteServizio || ''
     };
@@ -13166,6 +13453,37 @@ function getAllShippingData() {
         data.push(getShippingScheduleRowData(row));
     });
     return data;
+}
+
+/**
+ * Restituisce l'elenco delle modifiche di stato delle spedizioni memorizzate
+ * localmente.  Questi dati vengono inviati al server per consentire
+ * la sincronizzazione delle notifiche tra i diversi utenti.
+ * @returns {Array} Array di oggetti contenenti le modifiche di stato spedizione
+ */
+function getShippingStatusChanges() {
+    try {
+        const local = localStorage.getItem('shippingStatusChanges');
+        return local ? JSON.parse(local) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+/**
+ * Restituisce tutte le modifiche di stato registrate per i controlli CQ/QA.
+ * Questi dati vengono inviati al server per generare statistiche sugli
+ * sblocchi e notifiche agli utenti abilitati.  Se il localStorage non
+ * contiene la chiave, restituisce un array vuoto.
+ * @returns {Array} Elenco delle modifiche di stato CQ/QA
+ */
+function getQualityStatusChanges() {
+    try {
+        const local = localStorage.getItem('qualityStatusChanges');
+        return local ? JSON.parse(local) : [];
+    } catch (e) {
+        return [];
+    }
 }
 
     /**
@@ -13267,9 +13585,8 @@ function updateImportTimestamps() {
         const spanId = mapping[mode];
         const spanElem = document.getElementById(spanId);
         if (spanElem) {
-        // Recupera il valore direttamente in base all'ID dello span
-        const ts = localStorage.getItem(spanId);
-        spanElem.textContent = ts ? ` (Ultimo import: ${ts})` : '';
+            const ts = localStorage.getItem(`lastImport_${mode}`);
+            spanElem.textContent = ts ? ` (Ultimo import: ${ts})` : '';
         }
     });
 
@@ -13576,6 +13893,8 @@ document.addEventListener('DOMContentLoaded', () => {
     makeAlertDraggable('adrNotification');
     makeAlertDraggable('qualityNotification');
     makeAlertDraggable('warehouseNotification');
+    // Rendi trascinabile anche il pop‑up delle spedizioni
+    makeAlertDraggable('shippingNotification');
 
     // Aggiorna subito il Gantt di magazzino per inizializzare l'intervallo a 30 giorni
     if (typeof updateWarehouseGanttChart === 'function') {
@@ -13661,10 +13980,7 @@ function updateLastImportsSummary() {
     };
     let html = '';
     Object.keys(displayNames).forEach(mode => {
-        // Usa chiavi uniformi senza underscore (es. lastImportPP, lastImportOV)
-        // Normalizza il nome per costruire la chiave senza underscore e con iniziale maiuscola
-        const normalized = mode.charAt(0).toUpperCase() + mode.slice(1);
-        const ts = localStorage.getItem('lastImport' + normalized);
+        const ts = localStorage.getItem('lastImport_' + mode);
         const label = displayNames[mode];
         html += `<div><strong>Import ${label}:</strong> ${ts ? ts : '—'}</div>`;
     });
@@ -13889,7 +14205,7 @@ function createDockedScrollbarsForContainer(container) {
     });
 
     // Osserva cambi dimensioni per adeguare la larghezza dell'inner
-    if (typeof ResizeObserver !== 'undefined') {
+        if (typeof ResizeObserver !== 'undefined') {
         const ro = new ResizeObserver(syncSizes);
         ro.observe(container);
         // osserva anche il primo figlio "reale" se presente (tabella o chart)
@@ -13897,7 +14213,8 @@ function createDockedScrollbarsForContainer(container) {
         if (firstRealChild) ro.observe(firstRealChild);
     } else {
         window.addEventListener('resize', syncSizes);
-        setInterval(syncSizes, 500);
+        // Esegui syncSizes meno frequentemente (1 secondo) per ridurre il carico
+        setInterval(syncSizes, 1000);
     }
 
     // Impostazione iniziale
@@ -14555,6 +14872,8 @@ exportDailyPdfBtn.addEventListener('click', () => {
     display: flex;
     gap: 8px;
     padding: 5px;
+    /* Allinea le box in alto per consentire al loro contenuto di determinare l'altezza. */
+    align-items: flex-start;
 }
 .tooltip-box {
     padding: 10px 14px;
@@ -16336,8 +16655,7 @@ if (importOSBtn) {
                 // Aggiorna timestamp dell'ultimo import OS
                 const ts = formatDateTimeForDisplay(new Date());
                 try {
-                    // Usa una chiave uniforme senza underscore
-                    localStorage.setItem('lastImportOS', ts);
+                    localStorage.setItem('lastImport_OS', ts);
                 } catch (e) {}
                 if (typeof updateImportTimestamps === 'function') updateImportTimestamps();
             } else {
@@ -16684,11 +17002,8 @@ const exportPropostaLayoutBtn = document.getElementById('exportPropostaLayoutBtn
         exportPropostaLayoutBtn.addEventListener('click', exportPropostaLayoutPDF);
     }
     
-    // Intervallo di aggiornamento automatico dei dati impostato a 5 minuti
-    // (300.000 ms). Questo consente a tutti gli utenti di ricevere in modo
-    // regolare le modifiche effettuate da altri sulle tabelle. Per cambiare
-    // l'intervallo di sincronizzazione è sufficiente modificare il valore.
-    setInterval(loadDataFromServer, 300000);
+    // L'aggiornamento automatico dei dati viene gestito in un'unica posizione (vedi sezione iniziale).
+    // Qui non attiviamo un nuovo setInterval per evitare duplicazioni e sovraccarico.
     window.addEventListener('resize', updateStickyPositions);
     const mainObserver = new MutationObserver(updateStickyPositions);
     if (stickyControlsWrapper) {
@@ -16739,10 +17054,9 @@ const exportPropostaLayoutBtn = document.getElementById('exportPropostaLayoutBtn
                     // Salva la data di importazione per visualizzarla accanto al bottone
                     if (typeof formatDateTimeForDisplay === 'function') {
                         const nowStr = formatDateTimeForDisplay(new Date());
-                        // Usa una chiave uniforme senza underscore
-                        localStorage.setItem('lastImportLayout', nowStr);
+                        localStorage.setItem('lastImport_Layout', nowStr);
                     } else {
-                        localStorage.setItem('lastImportLayout', Date.now().toString());
+                        localStorage.setItem('lastImport_Layout', Date.now().toString());
                     }
                     if (typeof updateImportTimestamps === 'function') {
                         updateImportTimestamps();
@@ -16918,15 +17232,23 @@ if (arrivalStartDateInput && arrivalEndDateInput) {
         flatpickr(medicalDeviceStartDateInput, { dateFormat: "d/m/Y", locale: "it", defaultDate: oggi, onChange: updateMedicalDeviceProductionTable });
         flatpickr(medicalDeviceEndDateInput, { dateFormat: "d/m/Y", locale: "it", defaultDate: nextWeek, onChange: updateMedicalDeviceProductionTable });
 
-        filterMedicalDeviceCodice.addEventListener('input', updateMedicalDeviceProductionTable);
-        filterMedicalDeviceDescrizione.addEventListener('input', updateMedicalDeviceProductionTable);
-        filterMedicalDeviceCliente.addEventListener('input', updateMedicalDeviceProductionTable);
-        // Listener anche per i nuovi filtri data e lotto se presenti
-        if (filterMedicalDeviceData) filterMedicalDeviceData.addEventListener('input', updateMedicalDeviceProductionTable);
-        if (filterMedicalDeviceLotto) filterMedicalDeviceLotto.addEventListener('input', updateMedicalDeviceProductionTable);
-        // Nuovi listener per filtri data e lotto
-        if (filterMedicalDeviceData) filterMedicalDeviceData.addEventListener('input', updateMedicalDeviceProductionTable);
-        if (filterMedicalDeviceLotto) filterMedicalDeviceLotto.addEventListener('input', updateMedicalDeviceProductionTable);
+        // Aggiungi listener per filtrare i dati medicali con debounce per migliorare le prestazioni.
+        // Utilizziamo una funzione debounce per evitare chiamate ripetute mentre l'utente digita.
+        function debounce(func, delay) {
+            let timer;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timer);
+                timer = setTimeout(() => func.apply(context, args), delay);
+            };
+        }
+        const debouncedUpdateMedical = debounce(updateMedicalDeviceProductionTable, 250);
+        filterMedicalDeviceCodice.addEventListener('input', debouncedUpdateMedical);
+        filterMedicalDeviceDescrizione.addEventListener('input', debouncedUpdateMedical);
+        filterMedicalDeviceCliente.addEventListener('input', debouncedUpdateMedical);
+        // Listener per i filtri data e lotto: usa debounce per evitare lag durante la digitazione
+        if (filterMedicalDeviceData) filterMedicalDeviceData.addEventListener('input', debouncedUpdateMedical);
+        if (filterMedicalDeviceLotto) filterMedicalDeviceLotto.addEventListener('input', debouncedUpdateMedical);
 
         clearMedicalDeviceDateBtn.addEventListener('click', () => {
             medicalDeviceStartDateInput._flatpickr.clear();
@@ -16949,35 +17271,8 @@ if (arrivalStartDateInput && arrivalEndDateInput) {
         });
     }
 
-// ========================================================================
-    // ==> BLOCCO DI ATTIVAZIONE PER LA NUOVA TABELLA MEDICAL DEVICE <==
-    // ========================================================================
-    if (medicalDeviceStartDateInput && medicalDeviceEndDateInput) {
-        const oggi = new Date();
-        const nextWeek = new Date();
-        nextWeek.setDate(oggi.getDate() + 7);
-
-        flatpickr(medicalDeviceStartDateInput, { dateFormat: "d/m/Y", locale: "it", defaultDate: oggi, onChange: updateMedicalDeviceProductionTable });
-        flatpickr(medicalDeviceEndDateInput, { dateFormat: "d/m/Y", locale: "it", defaultDate: nextWeek, onChange: updateMedicalDeviceProductionTable });
-
-        filterMedicalDeviceCodice.addEventListener('input', updateMedicalDeviceProductionTable);
-        filterMedicalDeviceDescrizione.addEventListener('input', updateMedicalDeviceProductionTable);
-        filterMedicalDeviceCliente.addEventListener('input', updateMedicalDeviceProductionTable);
-
-        clearMedicalDeviceDateBtn.addEventListener('click', () => {
-            medicalDeviceStartDateInput._flatpickr.clear();
-            medicalDeviceEndDateInput._flatpickr.clear();
-            updateMedicalDeviceProductionTable();
-        });
-        clearMedicalDeviceFiltersBtn.addEventListener('click', () => {
-            filterMedicalDeviceCodice.value = '';
-            filterMedicalDeviceDescrizione.value = '';
-            filterMedicalDeviceCliente.value = '';
-            if (filterMedicalDeviceData) filterMedicalDeviceData.value = '';
-            if (filterMedicalDeviceLotto) filterMedicalDeviceLotto.value = '';
-            updateMedicalDeviceProductionTable();
-        });
-    }
+        // (Il blocco duplicato per l'attivazione della tabella medical device è stato rimosso
+        // poiché i listener e la configurazione vengono già applicati sopra con debounce.)
 
     if (addMedicalDeviceRowBtn) {
         addMedicalDeviceRowBtn.addEventListener('click', () => {
@@ -17479,7 +17774,7 @@ function abbreviateOperatorName(fullName) {
             // Spaziatura prima della riga logistica
             html += `<tr><td colspan="14" style="height:24px; border:none;"></td></tr>`;
             // Riga logistica con più spazio per i campi da compilare
-            html += `<tr class="logistic-row"><td colspan="14"><strong>Numero colli:</strong> _______ &nbsp;&nbsp;&nbsp; <strong>Numero pallet:</strong> ___________ &nbsp;&nbsp;&nbsp; <strong>Peso netto totale:</strong> _________ kg &nbsp;&nbsp;&nbsp; <strong>Peso lordo totale:</strong> __________ kg &nbsp;&nbsp;&nbsp; <strong>Volume totale:</strong> ___________ m³</td></tr>`;
+            html += `<tr class="logistic-row"><td colspan="14"><strong>Numero colli:</strong> _______ &nbsp;&nbsp;&nbsp; <strong>Numero pallet:</strong> ________________ &nbsp;&nbsp;&nbsp; <strong>Peso netto totale:</strong> _____________ kg &nbsp;&nbsp;&nbsp; <strong>Peso lordo totale:</strong> _______________ kg &nbsp;&nbsp;&nbsp; <strong>Volume totale:</strong> _______________ m³</td></tr>`;
             // Sezione note commerciali
             html += `<tr class="logistic-row"><td colspan="14"><strong>Note commerciali:</strong><br><span style="display:inline-block; width:100%; border-bottom:1px solid #aaa; height:12px;"></span><br><span style="display:inline-block; width:100%; border-bottom:1px solid #aaa; height:12px;"></span><br><span style="display:inline-block; width:100%; border-bottom:1px solid #aaa; height:12px;"></span></td></tr>`;
             // Sezione note tradizionali
@@ -18000,22 +18295,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Gestione del click sul pulsante di logout.  Rimuove il livello utente
-  // dalla sessione e ricarica la pagina per mostrare nuovamente il pannello di login.
-  const logoutNavBtn = document.getElementById('logoutNavBtn');
-  if (logoutNavBtn) {
-    logoutNavBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      try {
-        sessionStorage.removeItem('userLevel');
-      } catch (e) {
-        console.warn('Impossibile cancellare userLevel dalla sessione:', e);
-      }
-      // Facoltativamente pulisci altre chiavi correlate se necessario
-      location.reload();
-    });
-  }
-
   // Registro Sblocchi CQ/QA
   const sbloccoBtn = document.getElementById('sbloccoBtn');
   const sbloccoModal = document.getElementById('sbloccoModal');
@@ -18192,16 +18471,6 @@ window.recordSbloccoEvent = function(eventObj) {
     // giallo al rosso e un'etichetta che mostra il peso totale in KB.  La
     // funzione viene eseguita inizialmente al caricamento della pagina e
     // successivamente ogni 10 secondi.
-    /**
-     * Aggiorna il tachimetro delle prestazioni.  Calcola la quantità di
-     * caratteri salvati nel localStorage (che include i dati importati,
-     * tabelle di produzione, sblocchi, ecc.) e ne deriva un rapporto
-     * rispetto ad una soglia di 300k caratteri (~300 KB).  In base a tale
-     * rapporto viene impostato il colore della barra: verde quando il
-     * carico è basso, giallo quando si avvicina al limite di saturazione,
-     * rosso quando si supera una soglia critica.  L'etichetta mostra
-     * l'occupazione in KB con una sola cifra decimale.
-     */
     function updatePerformanceGauge() {
         var size = 0;
         try {
@@ -18210,55 +18479,93 @@ window.recordSbloccoEvent = function(eventObj) {
         } catch (e) {
             size = 0;
         }
-        /*
-         * Calcola il rapporto di utilizzo rispetto ad una soglia di 5 MB
-         * (5 * 1024 * 1024 caratteri).  Questa soglia più elevata
-         * riflette meglio il limite effettivo del localStorage (~5 MB per
-         * dominio) e permette al tachimetro di muoversi gradualmente
-         * anziché saturarsi immediatamente con file di grandi dimensioni.
-         */
-        var maxStorage = 5 * 1024 * 1024; // 5 MB
-        var ratio = size / maxStorage;
+        // Calcola il rapporto rispetto a un limite massimo di 5 MB per rendere l'indicatore più sensibile anche con grandi quantità di dati.
+        var maxSize = 5 * 1024 * 1024; // 5 megabyte
+        var ratio = size / maxSize;
         if (ratio > 1) ratio = 1;
-        // Applica un ammorbidimento (smoothing) al valore mostrato per
-        // evitare salti improvvisi dell'ago.  Manteniamo l'ultimo valore
-        // calcolato in una variabile globale e lo aggiorniamo verso
-        // l'obiettivo con un fattore di smorzamento (0.3).
-        if (typeof window.lastGaugeRatio === 'undefined') {
-            window.lastGaugeRatio = ratio;
-        } else {
-            window.lastGaugeRatio = window.lastGaugeRatio + (ratio - window.lastGaugeRatio) * 0.3;
-        }
-        var smoothed = window.lastGaugeRatio;
-        var pointer = document.getElementById('gaugePointer');
         var label = document.getElementById('performanceGaugeLabel');
-        if (!pointer || !label) return;
-        // Calcola l'angolo di rotazione del puntatore: parte da -90° (0%) e
-        // arriva a +90° (100%).  Clampa il rapporto a [0,1].
-        var angle = -90 + smoothed * 180;
-        pointer.style.transform = 'rotate(' + angle + 'deg)';
-        label.textContent = 'Carico dati: ' + (size / 1024).toFixed(1) + ' KB';
+        if (label) {
+            label.textContent = 'Carico dati: ' + (size / 1024).toFixed(1) + ' KB';
+        }
+        // Disegna l'indicatore analogico se la funzione è disponibile.
+        if (typeof drawPerformanceGauge === 'function') {
+            drawPerformanceGauge(ratio);
+        }
     }
 
-    // -----------------------------------------------------------------------------
-    // Funzioni e strutture di supporto per il monitoraggio delle prestazioni
-    // -----------------------------------------------------------------------------
-    // Oggetto globale in cui vengono salvate le durate di rendering delle tabelle
-    // (in millisecondi).  Le chiavi corrispondono ai tipi di tabella ('CQ' e 'QA').
-    if (!window.lastRenderDurations) window.lastRenderDurations = {};
-
     /**
-     * Aggiorna l'elemento della UI dedicato alle metriche di prestazione.
-     * Viene chiamato dopo ogni renderTable() per visualizzare i tempi di
-     * elaborazione.  Se non sono presenti metriche, il testo viene azzerato.
+     * Disegna un tachimetro analogico sul canvas dedicato.  Il tachimetro è suddiviso in
+     * tre zone (verde, gialla e rossa) e la lancetta si sposta in base al parametro ratio.
+     * @param {number} ratio - Valore compreso tra 0 e 1 che rappresenta il carico corrente.
      */
-    function updatePerfMetrics() {
-        var el = document.getElementById('perfMetrics');
-        if (!el) return;
-        var parts = [];
-        if (window.lastRenderDurations.CQ) parts.push('CQ ' + window.lastRenderDurations.CQ.toFixed(0) + ' ms');
-        if (window.lastRenderDurations.QA) parts.push('QA ' + window.lastRenderDurations.QA.toFixed(0) + ' ms');
-        el.textContent = parts.length ? ('Ultimo rendering: ' + parts.join(' | ')) : '';
+    function drawPerformanceGauge(ratio) {
+        const canvas = document.getElementById('performanceGaugeCanvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        // Pulisci il canvas
+        ctx.clearRect(0, 0, w, h);
+        // Definizione del centro del semicerchio (posizionato più in basso per lasciare spazio alla scala)
+        const centerX = w / 2;
+        const centerY = h * 0.85;
+        // Calcolo del raggio in base alle dimensioni del canvas
+        const radius = Math.min(w, h * 1.7) / 2 - 10;
+        const startAngle = Math.PI;      // 180 gradi (punto di inizio a sinistra)
+        const totalAngle = Math.PI;      // metà cerchio (180 gradi)
+        // Definisce le fasce con i relativi colori e limiti
+        const segments = [
+            { upto: 0.5, color: '#28a745' },   // verde fino al 50%
+            { upto: 0.8, color: '#ffc107' },   // giallo fino all'80%
+            { upto: 1.0, color: '#dc3545' }    // rosso oltre l'80%
+        ];
+        let prevLimit = 0;
+        // Disegna le fasce colorate
+        segments.forEach(segment => {
+            ctx.beginPath();
+            const segStart = startAngle + prevLimit * totalAngle;
+            const segEnd = startAngle + segment.upto * totalAngle;
+            ctx.arc(centerX, centerY, radius, segStart, segEnd, false);
+            ctx.lineWidth = 16;
+            ctx.strokeStyle = segment.color;
+            ctx.stroke();
+            prevLimit = segment.upto;
+        });
+        // Disegna i valori di riferimento (trattini sulla scala)
+        const tickCount = 5;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#6c757d';
+        for (let i = 0; i <= tickCount; i++) {
+            const tickRatio = i / tickCount;
+            const angle = startAngle + tickRatio * totalAngle;
+            const innerR = radius - 18;
+            const outerR = radius - 5;
+            const ix = centerX + innerR * Math.cos(angle);
+            const iy = centerY + innerR * Math.sin(angle);
+            const ox = centerX + outerR * Math.cos(angle);
+            const oy = centerY + outerR * Math.sin(angle);
+            ctx.beginPath();
+            ctx.moveTo(ix, iy);
+            ctx.lineTo(ox, oy);
+            ctx.stroke();
+        }
+        // Calcola l'angolo della lancetta
+        const pointerAngle = startAngle + ratio * totalAngle;
+        const pointerLength = radius - 25;
+        const px = centerX + pointerLength * Math.cos(pointerAngle);
+        const py = centerY + pointerLength * Math.sin(pointerAngle);
+        // Disegna la lancetta
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(px, py);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#343a40';
+        ctx.stroke();
+        // Disegna il perno centrale
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#343a40';
+        ctx.fill();
     }
     // Programma l'aggiornamento periodico del tachimetro
     document.addEventListener('DOMContentLoaded', function() {
@@ -18268,10 +18575,8 @@ window.recordSbloccoEvent = function(eventObj) {
             perfWrapper.style.display = 'block';
         }
         updatePerformanceGauge();
-        // Aggiorna il tachimetro ogni 15 secondi: frequenza più bassa per
-        // ridurre l'overhead di lettura dal localStorage e migliorare la
-        // reattività generale della pagina.
-setInterval(updatePerformanceGauge, 15000);
+        // Aggiorna il tachimetro ogni 15 secondi (15000 ms) anziché ogni 10 secondi
+        setInterval(updatePerformanceGauge, 15000);
     });
     </script>
 </body>
@@ -18290,6 +18595,27 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
+
+    // Gestione logout: se presente il pulsante di logout aggiungi un handler che
+    // reimposta il livello utente e ricarica la pagina.  La ricarica forza la
+    // visualizzazione dell'overlay di login anche se l'utente era autenticato.
+    const logoutLink = document.getElementById('logoutLink');
+    if (logoutLink) {
+        logoutLink.addEventListener('click', function(ev) {
+            ev.preventDefault();
+            try {
+                // Pulisce eventuali dati di autenticazione memorizzati
+                if (typeof currentUserLevel !== 'undefined') {
+                    currentUserLevel = 0;
+                }
+                sessionStorage.removeItem('currentUserLevel');
+            } catch (er) {
+                // Ignora eventuali errori su sessionStorage
+            }
+            // Ricarica la pagina per mostrare nuovamente la schermata di login
+            location.reload();
+        });
+    }
     // Pulsante per aprire il registro degli sblocchi
     const sbloccoBtnEl = document.getElementById('sbloccoBtn');
     if (sbloccoBtnEl) {
@@ -18374,12 +18700,6 @@ function recordSbloccoEvent(event) {
         console.warn('Errore nel salvataggio dell\'evento sblocco:', e);
     }
 }
-
-    // Rende accessibili globalmente le metriche di prestazione e la funzione di aggiornamento.
-    if (typeof window !== 'undefined') {
-        window.lastRenderDurations = window.lastRenderDurations || {};
-        window.updatePerfMetrics = updatePerfMetrics;
-    }
 
 // Restituisce l'elenco completo degli eventi di sblocco
 function getAllSbloccoEventsData() {
@@ -18534,7 +18854,6 @@ function printSbloccoTable() {
     setTimeout(function() { newWin.print(); }, 300);
 }
 </script>
-</html>
 <script>
 // === PATCH: Warehouse Gantt dual-scroll + side buttons (top bar between Arrivi and Gantt) ===
 (function(){
@@ -19059,29 +19378,79 @@ function printSbloccoTable() {
   }
 })();
 // === END PATCH ===
-// Ripristina automaticamente il login salvato in sessionStorage al caricamento della pagina.
-(function() {
+
+// === Storico CQ/QA ===
+// Questo script inizializza l'interfaccia per visualizzare lo storico degli
+// sblocchi CQ/QA.  Viene eseguito dopo il caricamento del DOM e aggiunge
+// listener ai pulsanti di apertura/chiusura della finestra di log.  Inoltre
+// popola dinamicamente la tabella degli sblocchi leggendo i dati da
+// localStorage (qualityStatusChanges) e calcola un riepilogo dei conteggi.
+document.addEventListener('DOMContentLoaded', () => {
+  const qlBtn = document.getElementById('qualityLogBtn');
+  const qlContainer = document.getElementById('qualityLogContainer');
+  const closeQlBtn = document.getElementById('closeQualityLogBtn');
+  /**
+   * Popola la tabella dello storico CQ/QA.  Ordina le modifiche per
+   * data/ora (decrescente) e aggiorna il conteggio totale di sblocchi CQ
+   * e QA.  Se non sono presenti cambiamenti, la tabella sarà vuota.
+   */
+  function populateQualityLog() {
+    let changes;
     try {
-        const lvlStr = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('userLevel') : null;
-        const lvl = lvlStr ? parseInt(lvlStr, 10) : 0;
-        if (lvl > 0) {
-            // Se possibile, aggiorna la variabile globale currentUserLevel
-            try {
-                window.currentUserLevel = lvl;
-            } catch (_) {}
-            // Nascondi l'overlay di login, se presente
-            const overlay = document.getElementById('loginOverlay');
-            if (overlay) overlay.style.display = 'none';
-            // Applica i permessi ed eventuali aggiornamenti della UI
-            if (typeof applyPermissions === 'function') {
-                try { applyPermissions(lvl); } catch (e) {}
-            }
-            // Aggiorna la tabella di analisi e inizializza dopo il login se le funzioni esistono.
-            try { if (typeof updateAnalisiTable === 'function') updateAnalisiTable(); } catch (e) {}
-            try { if (typeof initializeAfterLogin === 'function') initializeAfterLogin(); } catch (e) {}
-        }
+      changes = JSON.parse(localStorage.getItem('qualityStatusChanges') || '[]');
     } catch (e) {
-        console.warn("Errore durante il ripristino dell'utente dalla sessionStorage:", e);
+      changes = [];
     }
-})();
+    if (!Array.isArray(changes)) changes = [];
+    // Ordina per timestamp decrescente
+    changes.sort((a, b) => {
+      const dateA = new Date(a.timestamp);
+      const dateB = new Date(b.timestamp);
+      return dateB - dateA;
+    });
+    const tbody = document.querySelector('#qualityLogTable tbody');
+    if (!tbody) return;
+    // Svuota la tabella prima di riempirla
+    tbody.innerHTML = '';
+    let cqCount = 0;
+    let qaCount = 0;
+    changes.forEach(item => {
+      if (item.type === 'CQ') cqCount++;
+      else if (item.type === 'QA') qaCount++;
+      const tr = document.createElement('tr');
+      const dt = item.timestamp ? new Date(item.timestamp) : null;
+      const formatted = dt ? dt.toLocaleString('it-IT') : '';
+      tr.innerHTML = `
+        <td>${formatted}</td>
+        <td>${item.type || ''}</td>
+        <td>${item.ov || ''}</td>
+        <td>${item.op || ''}</td>
+        <td>${item.code || ''}</td>
+        <td>${item.descrizione || ''}</td>
+        <td>${item.lotto || ''}</td>
+        <td>${item.quantita || ''}</td>
+        <td>${item.um || ''}</td>
+        <td>${item.newStatus || ''}</td>`;
+      tbody.appendChild(tr);
+    });
+    // Aggiorna il riepilogo
+    const cqSpan = document.getElementById('totalCqCount');
+    const qaSpan = document.getElementById('totalQaCount');
+    if (cqSpan) cqSpan.textContent = cqCount;
+    if (qaSpan) qaSpan.textContent = qaCount;
+  }
+  if (qlBtn && qlContainer && closeQlBtn) {
+    qlBtn.addEventListener('click', () => {
+      populateQualityLog();
+      // Utilizza flex per centrare il contenuto verticalmente
+      qlContainer.style.display = 'flex';
+      // Rimuovi l'indicatore di nuovi record quando l'utente apre lo storico
+      qlBtn.classList.remove('has-new');
+    });
+    closeQlBtn.addEventListener('click', () => {
+      qlContainer.style.display = 'none';
+    });
+  }
+});
+
 </script>
